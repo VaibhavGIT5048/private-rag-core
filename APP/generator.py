@@ -1,4 +1,4 @@
-print("🚩 [DEBUG] Script started...") # This must print immediately
+print("[DEBUG] Script started...") # This must print immediately
 
 import os
 import json
@@ -10,7 +10,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaLLM
 
-print("🚩 [DEBUG] Libraries loaded successfully.")
+print(" [DEBUG] Libraries loaded successfully.")
 
 # ─────────────────────────────────────────────────────────────────────
 # 1. RETRIEVAL LOGIC (Integrated to avoid import errors)

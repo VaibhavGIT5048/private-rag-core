@@ -7,7 +7,7 @@ from langchain_ollama import OllamaLLM
 from APP.chunking import chunk_documents, save_chunks_jsonl
 from APP.pdf_loading import load_pdf
 from APP.quality_gate import apply_quality_gate, save_chunks_jsonl as save_processed_jsonl
-from APP.vector_store import build_hybrid_indices, hybrid_retrieve
+from APP.vector_store import build_hybrid_indices, hybrid_retrieve, expand_with_neighbors
 from dotenv import load_dotenv
 import os
 
@@ -21,16 +21,39 @@ DEFAULT_MODEL = "llama3.1:8b"
 
 def build_prompt(question: str, contexts: list[str]) -> str:
     context_blob = "\n\n".join(contexts)
-    return f"""You are a strict document QA assistant.
-Answer ONLY from the provided context.
-If the answer is not in the context, reply exactly: I cannot find this information in the document.
-Keep the answer concise and factual.
+    return f"""You are an expert document analyst and retrieval-augmented AI assistant.
 
-Context:
+Your task is to answer the user's question using ONLY the information provided in the retrieved document context.
+
+INSTRUCTIONS:
+
+1. Read ALL retrieved chunks carefully before answering.
+2. Information may be distributed across multiple chunks.
+3. Combine and synthesize information from different chunks whenever necessary.
+4. If a principle, concept, case study, example, statistic, recommendation, or conclusion appears in separate chunks, connect them logically.
+5. If the answer is partially available across multiple chunks, construct the most complete answer possible.
+6. Prioritize factual accuracy over brevity.
+7. Do NOT invent, assume, or hallucinate information that is not supported by the context.
+8. If page numbers are available in the context metadata, mention them when relevant.
+9. If the context contains enough evidence to reasonably infer the answer, provide the answer.
+10. Only respond with "I cannot find this information in the document." when NONE of the retrieved context is relevant to the question.
+
+ANSWERING RULES:
+
+* For factual questions: provide a direct answer followed by supporting details.
+* For explanatory questions: provide a concise explanation followed by evidence from the context.
+* For comparison questions: compare all relevant information found across chunks.
+* For summary questions: synthesize the key ideas from all relevant chunks.
+* For analytical questions: connect related information across chunks and explain the relationship.
+
+CONTEXT:
 {context_blob}
 
-Question: {question}
-Answer:"""
+QUESTION:
+{question}
+
+FINAL ANSWER:
+"""
 
 
 def process_uploaded_pdf(
@@ -38,7 +61,7 @@ def process_uploaded_pdf(
     chunk_size: int,
     chunk_overlap: int,
     quality_threshold: float,
-) -> tuple[object, object, list[Document], dict]:
+) -> tuple[object, object, list[Document], list[Document], dict]:
     pages = load_pdf(pdf_path)
     docs = [Document(page_content=p.page_content, metadata=p.metadata) for p in pages]
     chunks = chunk_documents(docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
@@ -49,18 +72,20 @@ def process_uploaded_pdf(
     processed_chunks = apply_quality_gate(chunks, threshold_score=quality_threshold)
     save_processed_jsonl(processed_chunks, "chunks/chunks_processed.jsonl")
     passed_chunks = [c for c in processed_chunks if c.metadata.get("passed_gate") is True]
+    retrieval_chunks = [c for c in processed_chunks if c.page_content.strip()]
 
-    if not passed_chunks:
-        raise RuntimeError("Quality gate dropped all chunks. Lower threshold or inspect document quality.")
+    if not retrieval_chunks:
+        raise RuntimeError("No retrievable chunks were produced. Inspect document extraction quality.")
 
-    vectorstore, bm25 = build_hybrid_indices(passed_chunks)
+    vectorstore, bm25 = build_hybrid_indices(retrieval_chunks)
     stats = {
         "pages": len(docs),
         "chunks": len(chunks),
         "passed_chunks": len(passed_chunks),
         "dropped_chunks": len(chunks) - len(passed_chunks),
+        "indexed_chunks": len(retrieval_chunks),
     }
-    return vectorstore, bm25, passed_chunks, stats
+    return vectorstore, bm25, retrieval_chunks, processed_chunks, stats
 
 
 def main() -> None:
@@ -89,7 +114,7 @@ def main() -> None:
         if st.button("Process PDF and Build RAG Index", type="primary"):
             with st.spinner("Running PDF loading, chunking, quality gate, and indexing..."):
                 try:
-                    vectorstore, bm25, chunks, stats = process_uploaded_pdf(
+                    vectorstore, bm25, retrieval_chunks, all_chunks, stats = process_uploaded_pdf(
                         pdf_path=pdf_path,
                         chunk_size=chunk_size,
                         chunk_overlap=chunk_overlap,
@@ -101,7 +126,8 @@ def main() -> None:
 
             st.session_state.vectorstore = vectorstore
             st.session_state.bm25 = bm25
-            st.session_state.chunks = chunks
+            st.session_state.retrieval_chunks = retrieval_chunks
+            st.session_state.chunks = all_chunks
             st.session_state.pipeline_stats = stats
             st.session_state.chat_history = []
             st.success("RAG pipeline is ready for chat.")
@@ -110,7 +136,8 @@ def main() -> None:
         s = st.session_state.pipeline_stats
         st.info(
             f"Pages: {s['pages']} | Chunks: {s['chunks']} | "
-            f"Passed Gate: {s['passed_chunks']} | Dropped: {s['dropped_chunks']}"
+            f"Passed Gate: {s['passed_chunks']} | Failed Gate: {s['dropped_chunks']} | "
+            f"Indexed: {s.get('indexed_chunks', s['passed_chunks'])}"
         )
 
     if "vectorstore" not in st.session_state:
@@ -139,10 +166,21 @@ def main() -> None:
                     query=question,
                     vectorstore=st.session_state.vectorstore,
                     bm25=st.session_state.bm25,
-                    chunks=st.session_state.chunks,
+                    chunks=st.session_state.get("retrieval_chunks", st.session_state.chunks),
                     top_n=top_n,
                 )
-                contexts = [doc.page_content for doc, _ in results]
+                expanded_docs = expand_with_neighbors(
+                    results=results,
+                    chunks=st.session_state.chunks,
+                    window=1,
+                )
+                contexts = []
+                for doc in expanded_docs:
+                    page = doc.metadata.get("page")
+                    if page is not None:
+                        contexts.append(f"[Page {page}] {doc.page_content}")
+                    else:
+                        contexts.append(doc.page_content)
                 prompt = build_prompt(question, contexts)
                 llm = OllamaLLM(model=model_name, temperature=0)
                 answer = llm.invoke(prompt)

@@ -25,10 +25,6 @@ from langchain_core.documents import Document
 # CONFIGURATION & INITIALIZATION
 # ─────────────────────────────────────────────────────────────────────
 load_dotenv()
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    raise RuntimeError("Please run: python -m spacy download en_core_web_sm")
 
 tokenizer = tiktoken.get_encoding("cl100k_base")
 embedder = SentenceTransformer("intfloat/e5-base-v2")

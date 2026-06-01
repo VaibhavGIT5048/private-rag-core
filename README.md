@@ -1,228 +1,344 @@
-# Semantic Question Answering over Large Documents using RAG
 <div align="center">
 
-Local PDF question answering with hybrid retrieval, a Streamlit chat UI, quality gating, and a built-in evaluation pipeline.
+<h1>📘 Chat with Your PDF</h1>
+<h3>Semantic Question Answering over Large Documents using RAG + LLaMA 3.1 (Ollama)</h3>
 
 <p>
-  <img src="https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white" />
-  <img src="https://img.shields.io/badge/Streamlit-UI-red?style=for-the-badge&logo=streamlit&logoColor=white" />
-  <img src="https://img.shields.io/badge/Ollama-Llama%203.1-orange?style=for-the-badge&logo=meta&logoColor=white" />
-  <img src="https://img.shields.io/badge/LangChain-Modular%20RAG-green?style=for-the-badge&logo=chainlink&logoColor=white" />
-  <img src="https://img.shields.io/badge/FAISS-Hybrid%20Search-blueviolet?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Streamlit-UI-red?style=for-the-badge&logo=streamlit&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Ollama-LLaMA%203.1-orange?style=for-the-badge&logo=meta&logoColor=white"/>
+  <img src="https://img.shields.io/badge/LangChain-RAG-green?style=for-the-badge&logo=chainlink&logoColor=white"/>
+  <img src="https://img.shields.io/badge/FAISS%20%2B%20BM25-Hybrid%20Search-blueviolet?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge"/>
 </p>
+
+<p>
+  <b>Upload a PDF. Ask document-grounded questions. Get local, private answers with hybrid retrieval and Ollama.</b>
+</p>
+
+<br/>
 
 </div>
 
-## What this project does
+---
 
-This repository turns long PDFs into a local, retrieval-grounded chat system. You upload a document, it gets extracted, chunked, filtered through a quality gate, indexed with both dense and sparse retrieval, and then answered by a local Ollama model.
+## 🌟 Why This Project?
 
-It also includes a separate evaluation harness that can generate QA pairs from the chunks, mix in out-of-distribution questions, and score the system with retrieval and answer-quality metrics.
+Large PDFs such as reports, papers, contracts, manuals, and policy documents are hard to search manually. Keyword search misses meaning, and cloud chat tools can require sending private documents outside your machine.
 
-## Highlights
+This project solves that with a local Retrieval-Augmented Generation pipeline:
 
-- Local-first RAG with no external API keys required.
-- Streamlit UI for upload, processing, retrieval, and chat.
-- Hybrid retrieval with FAISS + BM25 and reciprocal rank fusion.
-- Smart chunking with overlap and metadata preservation.
-- Quality gate that scores chunks before indexing.
-- PDF loader with `pdfplumber` and `pypdf` fallback.
-- Evaluation pipeline for in-scope and OOD question sets.
-- Saved artifacts for chunks, processed chunks, indexes, and evaluation reports.
+- ✅ **Runs locally** with Ollama and open-source embeddings
+- ✅ **Uses hybrid retrieval** with FAISS semantic search + BM25 keyword search
+- ✅ **Handles large PDFs** through page loading, chunking, overlap, and metadata
+- ✅ **Improves retrieval quality** with a configurable chunk quality gate
+- ✅ **Provides a Streamlit chat UI** for upload, processing, retrieval, and answers
+- ✅ **Includes evaluation tooling** for in-scope and out-of-scope QA checks
 
-## Pipeline Overview
+---
+
+## 🧠 How It Works — Architecture Overview
 
 ```mermaid
 flowchart TD
-    A[Upload PDF in Streamlit] --> B[APP/pdf_loading.py]
-    B --> C[APP/chunking.py]
-    C --> D[APP/quality_gate.py]
-    D --> E[APP/vector_store.py]
-    E --> F[Hybrid retrieval: FAISS + BM25]
-    F --> G[Prompt assembly]
-    G --> H[Ollama LLM]
-    H --> I[Answer + retrieved sources]
-
-    C --> J[APP/ragas_evaluation.py]
-    D --> J
-    E --> J
-    J --> K[Metrics report]
+    A[Upload PDF in Streamlit] --> B[PDF Loading]
+    B --> C[Text Chunking]
+    C --> D[Quality Gate]
+    D --> E[Hybrid Index Build]
+    E --> F[FAISS Dense Retrieval]
+    E --> G[BM25 Sparse Retrieval]
+    F --> H[Reciprocal Rank Fusion]
+    G --> H
+    H --> I[Neighbor Context Expansion]
+    I --> J[Grounded Prompt]
+    J --> K[Ollama LLaMA 3.1]
+    K --> L[Answer + Retrieved Sources]
 ```
 
-## Repository Layout
+> **RAG (Retrieval-Augmented Generation)** retrieves the most relevant document chunks first, then asks the language model to answer using only that retrieved context.
 
-```text
-.
-├── rag_ui.py                # Streamlit app entry point
-├── APP/
-│   ├── pdf_loading.py       # PDF extraction with pdfplumber/pypdf fallback
-│   ├── chunking.py          # Recursive chunking with overlap + metadata
-│   ├── quality_gate.py      # Chunk scoring and filtering
-│   ├── vector_store.py      # FAISS + BM25 indexing and hybrid retrieval
-│   └── ragas_evaluation.py  # Dataset generation and evaluation harness
-├── chunks/
-│   ├── chunks.jsonl         # Raw chunks
-│   └── chunks_processed.jsonl
-├── data/                    # Uploaded PDFs and source documents
-├── indexes/                 # Persisted FAISS / BM25 artifacts
-├── evals/                   # Evaluation outputs and reports
-└── evaluation/              # Additional evaluation assets / experiments
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---|---|
+| 📄 **PDF Upload** | Upload PDFs through the Streamlit browser UI |
+| 🧾 **PDF Extraction** | Uses `pdfplumber` with a `pypdf` fallback |
+| 🧩 **Smart Chunking** | Recursive chunking with configurable size and overlap |
+| 🚦 **Quality Gate** | Scores chunks using token length, punctuation, entity density, URL filtering, and overlap similarity |
+| 🔍 **Hybrid Retrieval** | Combines FAISS dense retrieval and BM25 keyword retrieval |
+| 🔁 **Rank Fusion** | Uses reciprocal rank fusion to merge semantic and keyword results |
+| 📚 **Source Context** | Shows retrieved chunks, scores, pages, and chunk IDs |
+| 🤖 **Local LLM** | Uses Ollama via `langchain-ollama` |
+| 📊 **Evaluation Harness** | Generates QA datasets, adds OOD questions, and writes evaluation reports |
+| 🔒 **Private by Default** | Documents and indexes stay on your local machine |
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| **UI** | Streamlit |
+| **LLM** | LLaMA 3.1 via Ollama |
+| **RAG Framework** | LangChain |
+| **Dense Retrieval** | FAISS |
+| **Sparse Retrieval** | BM25 via `rank-bm25` |
+| **Embeddings** | `sentence-transformers/all-MiniLM-L6-v2` |
+| **Quality Scoring** | `tiktoken`, `sentence-transformers`, optional spaCy |
+| **PDF Parsing** | `pdfplumber`, `pypdf` |
+| **Evaluation** | Ollama OpenAI-compatible endpoint, pandas, RAGAS-style judge prompts |
+
+---
+
+## ⚙️ Installation & Setup
+
+### Prerequisites
+
+Before starting, make sure you have:
+
+- Python 3.10 or higher
+- [uv](https://docs.astral.sh/uv/) installed
+- [Ollama](https://ollama.com/) installed and running
+- Enough disk space for the local Ollama model and embedding model cache
+
+---
+
+### Step 1 — Clone the Repository
+
+```bash
+git clone https://github.com/VaibhavGIT5048/Semantic-Question-Answering-over-Large-Documents-using-RAG-LLaMA-3-Ollama.git
+cd Semantic-Question-Answering-over-Large-Documents-using-RAG-LLaMA-3-Ollama
 ```
 
-## Main Components
+---
 
-### `rag_ui.py`
-
-The Streamlit app. It handles:
-
-- PDF upload
-- chunking
-- quality gate execution
-- hybrid index building
-- chat-style question answering
-- showing retrieved evidence chunks
-
-### `APP/pdf_loading.py`
-
-Loads PDFs into page-level objects with metadata. It tries `pdfplumber` first and falls back to `pypdf` if needed.
-
-### `APP/chunking.py`
-
-Uses `RecursiveCharacterTextSplitter` to create overlapping chunks and enriches each chunk with metadata like `chunk_id` and `chunk_size`.
-
-### `APP/quality_gate.py`
-
-Scores each chunk using token length, punctuation, entity density, and semantic overlap. Chunks that pass the threshold are indexed.
-
-### `APP/vector_store.py`
-
-Builds a dense FAISS index and a sparse BM25 index, then combines them with reciprocal rank fusion during retrieval.
-
-### `APP/ragas_evaluation.py`
-
-Generates evaluation questions from chunks, adds OOD questions, times retrieval, and computes metrics such as:
-
-- answer relevance
-- hallucination rate
-- faithfulness
-- irrelevance rate
-- retrieval latency
-- recall@k
-- mean reciprocal rank
-- exact match
-- token F1
-- context precision
-
-## Setup
-
-The project is designed to run locally with `uv` and Ollama.
-
-### 1. Install Ollama
-
-Install Ollama from [ollama.com](https://ollama.com/), then pull a model:
+### Step 2 — Install Ollama Model
 
 ```bash
 ollama pull llama3.1:8b
 ```
 
-If you prefer a different model, update the model name in the app sidebar or in the environment variables used by evaluation.
+Make sure Ollama is running before you start the app:
 
-### 2. Install Python dependencies
+```bash
+ollama serve
+```
+
+---
+
+### Step 3 — Install Python Dependencies
 
 ```bash
 uv pip install streamlit langchain langchain-community langchain-core langchain-huggingface langchain-ollama faiss-cpu sentence-transformers rank-bm25 pypdf pdfplumber spacy tiktoken scikit-learn pandas numpy python-dotenv openai ragas
 uv run python -m spacy download en_core_web_sm
 ```
 
-## Run the app
+If you do not install the spaCy model, the quality gate still runs with a lightweight fallback entity heuristic.
+
+---
+
+### Step 4 — Launch the App
 
 ```bash
 uv run streamlit run rag_ui.py
 ```
 
-If your environment uses the system `streamlit` binary instead, make sure it sees the same Python packages as the project environment.
+Your browser will open at the Streamlit local URL, usually `http://localhost:8501`.
 
-## How to use the app
+---
 
-1. Upload a PDF.
-2. Click the process button to run loading, chunking, gating, and indexing.
-3. Ask a question in the chat box.
-4. Review the answer and the retrieved source chunks.
+## 🚀 Usage
 
-## Typical outputs
+1. Upload a PDF from the Streamlit UI.
+2. Adjust chunk size, chunk overlap, quality threshold, retrieval count, or model name from the sidebar.
+3. Click **Process PDF and Build RAG Index**.
+4. Ask a natural language question about the uploaded PDF.
+5. Review the answer and retrieved source chunks.
 
-- `chunks/chunks.jsonl` for the raw chunk set.
-- `chunks/chunks_processed.jsonl` for gated chunks.
-- `indexes/faiss_index/` for dense retrieval.
-- `indexes/bm25_data.pkl` for sparse retrieval.
-- `evals/experiments/fast_eval_report.csv` for evaluation summaries.
+### Example Questions
 
-## Evaluation workflow
+```text
+"Summarize the executive summary."
+"What are the main recommendations?"
+"Which trends are discussed in the document?"
+"What does the report say about risk or uncertainty?"
+"Compare the key growth areas mentioned across the report."
+```
 
-The evaluation script is separate from the Streamlit app. It can:
+---
 
-- build a dataset from your chunked document
-- generate in-scope QA pairs
-- generate OOD questions
-- run the student model against retrieved context
-- score answers with a local judge model
-- aggregate metrics for in-scope and OOD subsets
+## 📁 Project Structure
 
-Use it after you have processed a document and built indexes.
+```text
+.
+├── rag_ui.py                # Streamlit entry point
+├── APP/
+│   ├── app.py               # Main Streamlit RAG app
+│   ├── pdf_loading.py       # PDF extraction with metadata
+│   ├── chunking.py          # Recursive chunking and JSONL export
+│   ├── quality_gate.py      # Chunk scoring and pass/fail tagging
+│   ├── vector_store.py      # FAISS + BM25 indexing and hybrid retrieval
+│   ├── embedding.py         # Standalone embedding test script
+│   ├── generator.py         # Standalone terminal RAG chat script
+│   └── ragas_evaluation.py  # Evaluation dataset generation and reporting
+├── chunks/                  # Generated chunk JSONL files, ignored by git
+├── data/                    # Uploaded/source PDFs, ignored by git
+├── indexes/                 # Generated FAISS/BM25 indexes, ignored by git
+├── evals/                   # Generated evaluation datasets/reports, ignored by git
+└── evaluation/              # Additional generated evaluation outputs, ignored by git
+```
 
-## Configuration notes
+---
 
-- Default chat model: `llama3.1:8b`
-- Default embeddings: `sentence-transformers/all-MiniLM-L6-v2`
-- Default retrieval: hybrid FAISS + BM25
-- Default chunk size: 1000 characters
-- Default chunk overlap: 150 characters
-- Quality gate threshold: 4.0
+## 🔧 Configuration
 
-You can tune these values directly in `rag_ui.py` or in the sidebar while the app is running.
+The main UI exposes the most useful settings in the sidebar:
 
-## Troubleshooting
+| Setting | Default | Purpose |
+|---|---:|---|
+| **Ollama model** | `llama3.1:8b` | Local model used for answer generation |
+| **Chunk size** | `1000` | Maximum characters per chunk |
+| **Chunk overlap** | `150` | Repeated characters between adjacent chunks |
+| **Quality threshold** | `4.0` | Minimum quality score used for pass/fail tagging |
+| **Retrieved chunks** | `4` | Number of top fused retrieval results shown |
 
-### Streamlit does not start
+Default embedding model:
 
-Run it from the project environment:
+```text
+sentence-transformers/all-MiniLM-L6-v2
+```
+
+Evaluation environment variables:
+
+```bash
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_API_KEY=ollama
+OLLAMA_STUDENT_MODEL=llama3.1:8b
+OLLAMA_JUDGE_MODEL=llama3.1:8b
+OLLAMA_GENERATOR_MODEL=llama3.1:8b
+```
+
+---
+
+## 📊 Evaluation Workflow
+
+After processing a document and building indexes, run:
+
+```bash
+uv run python APP/ragas_evaluation.py --regenerate --num-questions 20
+```
+
+The evaluator can:
+
+- Generate in-scope QA pairs from chunks
+- Generate out-of-scope questions
+- Retrieve context with the same hybrid retriever
+- Ask the student model for an answer
+- Judge the answer with an Ollama OpenAI-compatible client
+- Write detailed metrics to `evals/experiments/fast_eval_report.csv`
+
+Tracked source code stays clean because generated chunks, indexes, PDFs, and evaluation reports are ignored by git.
+
+---
+
+## 🧪 Typical Generated Outputs
+
+| Path | Purpose |
+|---|---|
+| `chunks/chunks.jsonl` | Raw chunk output |
+| `chunks/chunks_processed.jsonl` | Quality-scored chunks |
+| `indexes/faiss_index/` | Dense vector index |
+| `indexes/bm25_data.pkl` | Sparse BM25 index |
+| `evals/datasets/auto_eval.jsonl` | Generated evaluation dataset |
+| `evals/experiments/fast_eval_report.csv` | Evaluation results |
+
+---
+
+## 🐛 Troubleshooting
+
+**Ollama connection error**
+
+```bash
+ollama serve
+ollama pull llama3.1:8b
+```
+
+**Streamlit cannot find dependencies**
 
 ```bash
 uv run streamlit run rag_ui.py
 ```
 
-### Missing `spacy` or `en_core_web_sm`
-
-Install spaCy in the same interpreter that runs Streamlit:
+**spaCy model missing**
 
 ```bash
-uv pip install spacy
 uv run python -m spacy download en_core_web_sm
 ```
 
-### PDF extraction errors
+**No retrieval results**
 
-`APP/pdf_loading.py` now falls back to `pypdf` if `pdfplumber` is unavailable.
+Lower the quality threshold in the sidebar and process the PDF again. Also check whether the PDF text extraction produced readable text.
 
-### Empty retrieval results
+**Evaluation fails to connect to judge model**
 
-If the quality gate is too strict, lower the threshold in the sidebar or inspect the processed chunks in `chunks/chunks_processed.jsonl`.
+Confirm the OpenAI-compatible Ollama endpoint is available at `http://localhost:11434/v1` and that the configured model exists locally.
 
-### Ollama connection issues
+---
 
-Make sure Ollama is running locally and that the model name matches the one selected in the UI.
+## 🗺️ Roadmap
 
-## Notes on the codebase
+- [x] Streamlit PDF upload and chat
+- [x] Modular PDF loading, chunking, quality gate, and retrieval layers
+- [x] Hybrid FAISS + BM25 retrieval
+- [x] Ollama-based local answer generation
+- [x] Evaluation harness with in-scope and OOD questions
+- [ ] Persist and reload processed document sessions from the UI
+- [ ] Multi-PDF comparison
+- [ ] Inline source highlighting
+- [ ] Docker setup for reproducible local runs
 
-- The app is intentionally split into small modules so loading, chunking, filtering, retrieval, and evaluation can evolve independently.
-- The UI only handles RAG chat. Evaluation stays out of the main user flow.
-- The repository already stores generated artifacts like chunks and indexes so experiments can be reproduced locally.
+---
 
-## License
+## 🤝 Contributing
 
-MIT License.
+Contributions are welcome. Keep changes focused and avoid committing local artifacts such as PDFs, chunks, indexes, virtual environments, and evaluation outputs.
 
-## Acknowledgment
+```bash
+git checkout -b feature/your-feature-name
+git commit -m "feat: add your feature"
+git push origin feature/your-feature-name
+```
 
-Built for local document question answering with RAG, Ollama, LangChain, FAISS, Streamlit, and iterative debugging.
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License**.
+
+---
+
+## 🙋‍♂️ Author
+
+<div align="center">
+
+**Vaibhav**  
+B.Tech Computer Science (Data Science & ML) | MRIIRS, Delhi  
+President @ Data Dynamos | Hackathon Builder | ML Researcher
+
+[![GitHub](https://img.shields.io/badge/GitHub-VaibhavGIT5048-black?style=flat-square&logo=github)](https://github.com/VaibhavGIT5048)
+
+</div>
+
+---
+
+## ⭐ Show Some Love
+
+If this project helped you, consider giving it a ⭐ on GitHub.
+
+---
+
+<div align="center">
+  <sub>Built with RAG, Ollama, LangChain, FAISS, BM25, and Streamlit.</sub>
+</div>

@@ -1,12 +1,20 @@
 import os
 import json
 import pickle
+import re
 import numpy as np
 from pathlib import Path
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from rank_bm25 import BM25Okapi
+
+
+TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)?")
+
+
+def tokenize_for_bm25(text: str) -> list[str]:
+    return TOKEN_PATTERN.findall(text.lower())
 
 # ─────────────────────────────────────────────────────────────────────
 # 1. LOAD DATA
@@ -24,18 +32,16 @@ def load_passed_chunks(path="chunks/chunks_processed.jsonl"):
         print(f"❌ Error: Could not find {path}")
         return []
 
-    passed_chunks = []
+    processed_chunks = []
     print(f"🔄 Loading data from: {target_path}")
     with open(target_path, "r", encoding="utf-8") as f:
         for line in f:
             data = json.loads(line)
-            # Only index what passed our Phase 3 gate
-            if data["metadata"].get("passed_gate") is True:
-                passed_chunks.append(Document(
-                    page_content=data["page_content"],
-                    metadata=data["metadata"]
-                ))
-    return passed_chunks
+            processed_chunks.append(Document(
+                page_content=data["page_content"],
+                metadata=data["metadata"]
+            ))
+    return processed_chunks
 
 # ─────────────────────────────────────────────────────────────────────
 # 2. BUILD INDICES
@@ -57,7 +63,7 @@ def build_hybrid_indices(chunks):
 
     # B. Build BM25 (Keyword)
     print("📝 Building BM25 Keyword Index (Sparse)...")
-    tokenized_corpus = [doc.page_content.lower().split() for doc in chunks]
+    tokenized_corpus = [tokenize_for_bm25(doc.page_content) for doc in chunks]
     bm25 = BM25Okapi(tokenized_corpus)
     
     with open(idx_dir / "bm25_data.pkl", "wb") as f:
@@ -70,13 +76,15 @@ def build_hybrid_indices(chunks):
 # 3. HYBRID RETRIEVAL (RRF)
 # ─────────────────────────────────────────────────────────────────────
 def hybrid_retrieve(query, vectorstore, bm25, chunks, k=60, top_n=3):
+    candidate_k = max(top_n * 6, 20)
+
     # 1. Semantic Search
-    semantic_results = vectorstore.similarity_search(query, k=10)
+    semantic_results = vectorstore.similarity_search(query, k=min(candidate_k, len(chunks)))
     
     # 2. Keyword Search
-    tokenized_query = query.lower().split()
+    tokenized_query = tokenize_for_bm25(query)
     keyword_scores = bm25.get_scores(tokenized_query)
-    top_indices = np.argsort(keyword_scores)[::-1][:10]
+    top_indices = np.argsort(keyword_scores)[::-1][:candidate_k]
     keyword_results = [chunks[i] for i in top_indices if keyword_scores[i] > 0]
 
     # 3. Reciprocal Rank Fusion (RRF)
@@ -96,6 +104,32 @@ def hybrid_retrieve(query, vectorstore, bm25, chunks, k=60, top_n=3):
     sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
     return [(doc_map[cid], score) for cid, score in sorted_results[:top_n]]
 
+
+def expand_with_neighbors(
+    results: list[tuple[Document, float]],
+    chunks: list[Document],
+    window: int = 1,
+) -> list[Document]:
+    id_to_doc = {doc.metadata["chunk_id"]: doc for doc in chunks}
+    expanded_ids: list[int] = []
+
+    for doc, _ in results:
+        cid = doc.metadata.get("chunk_id")
+        if cid is None:
+            continue
+        for neighbor_id in range(cid - window, cid + window + 1):
+            if neighbor_id in id_to_doc:
+                expanded_ids.append(neighbor_id)
+
+    seen: set[int] = set()
+    expanded_docs: list[Document] = []
+    for cid in expanded_ids:
+        if cid not in seen:
+            expanded_docs.append(id_to_doc[cid])
+            seen.add(cid)
+
+    return expanded_docs
+
 # ─────────────────────────────────────────────────────────────────────
 # MAIN EXECUTION
 # ─────────────────────────────────────────────────────────────────────
@@ -105,8 +139,8 @@ if __name__ == "__main__":
     print("="*50)
     
     # 1. Load Data
-    all_passed = load_passed_chunks()
-    print(f"📥 Found {len(all_passed)} high-quality chunks.")
+    all_passed = [c for c in load_passed_chunks() if c.page_content.strip()]
+    print(f"📥 Found {len(all_passed)} chunks to index.")
     
     if all_passed:
         # 2. Build

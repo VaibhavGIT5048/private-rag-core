@@ -5,10 +5,30 @@ import json
 import random
 import re
 import pickle
+import sys
+from pathlib import Path
 import pandas as pd
 import time
 from openai import AsyncOpenAI
-from ragas import experiment
+
+# Ensure project root is on sys.path when running as a script.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from ragas import experiment
+except Exception as exc:
+    def experiment(*args, **kwargs):
+        def decorator(fn):
+            return fn
+        return decorator
+
+    print(
+        "⚠️ Ragas import failed; running evaluation without ragas decorator. "
+        "Install langchain-google-vertexai or pin compatible ragas/langchain-community. "
+        f"Error: {exc}"
+    )
 from langchain_ollama import OllamaLLM
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -42,37 +62,152 @@ with open("indexes/bm25_data.pkl", "rb") as f:
 # ─────────────────────────────────────────────────────────────────────
 # 2. JUDGE PROMPT (FAST + ROBUST PARSING)
 # ─────────────────────────────────────────────────────────────────────
-VERDICT_PATTERN = re.compile(r"\b(Excellent|Hallucinated|Irrelevant)\b", re.IGNORECASE)
 REFUSAL_PATTERN = re.compile(
     r"\b(cannot find|not in the document|not provided in the document|not available in the document|cannot locate)\b",
     re.IGNORECASE,
 )
 
-JUDGE_SYSTEM = (
-    "You are a strict evaluator. Return a verdict using ONLY one of: "
-    "Excellent, Hallucinated, Irrelevant."
-)
+JUDGE_SYSTEM = "You are a strict evaluator. Return only the JSON object requested."
 
-def build_judge_prompt(question: str, response: str, contexts: list[str], ground_truth: str) -> str:
-    return f"""Evaluate the response based on the Context and Ground Truth provided.
+JSON_OBJECT_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
 
-Context: {" ".join(contexts)}
-Question: {question}
-Response: {response}
-Ground Truth: {ground_truth}
+RAGAS_EVAL_PROMPT = """You are an expert evaluation assistant for Retrieval-Augmented Generation (RAG) pipelines.
+Your task is to rigorously evaluate the quality of a RAG system across ALL RAGAS metrics.
 
-JUDGMENT CRITERIA:
-1. FAITHFULNESS: Does the response contain ANY information NOT present in the Context? If yes, it is Hallucinated.
-2. RELEVANCY: Does the response answer the Question directly without fluff?
-3. ACCURACY: Does the response match the facts in the Ground Truth?
+You will be provided with:
+- `document` (context): The retrieved context/chunk passed to the RAG system
+- `question`: The user query
+- `answer`: The RAG system's generated answer (if applicable)
 
-Return exactly two lines:
-Verdict: <Excellent|Hallucinated|Irrelevant>
-Reason: <short reason>
+---
+
+## TASK: OUT-OF-SCOPE QUESTION GENERATION
+
+Generate exactly ONE question that satisfies ALL of the following criteria:
+
+1. **Out of Scope**: The question CANNOT be answered using information found anywhere in the provided document/context.
+2. **Answerable in General**: The question has a clear, correct answer in the real world or from general knowledge - it is NOT unanswerable by nature.
+3. **Topically Plausible**: The question should appear related to the document's domain or subject area, so it feels like a natural but unsupported query.
+4. **Non-Trivial**: Avoid yes/no questions or overly simple factual questions. Prefer questions that require explanation, comparison, or specific details not covered in the document.
+
+---
+
+## RAGAS EVALUATION DIMENSIONS
+
+After generating the out-of-scope question, evaluate the provided `question`, `document`, and `answer` across the following RAGAS metrics. For each metric, assign a score between 0.0 and 1.0 and provide a brief justification.
+
+### 1. **Faithfulness**
+- Does the generated `answer` contain ONLY claims that are directly supported by the `document`?
+- Penalize hallucinations, fabrications, or unsupported assertions.
+- Score: 1.0 = fully grounded, 0.0 = completely hallucinated.
+
+### 2. **Answer Relevance**
+- Does the `answer` directly and completely address the `question`?
+- Penalize answers that are vague, off-topic, or only partially responsive.
+- Score: 1.0 = fully relevant and complete, 0.0 = irrelevant.
+
+### 3. **Context Precision**
+- Does the retrieved `document` contain information that is specifically useful for answering the `question`?
+- Penalize retrieval of generic or loosely related context that does not directly support the answer.
+- Score: 1.0 = highly precise context, 0.0 = context is irrelevant to the question.
+
+### 4. **Context Recall**
+- Does the `document` contain ALL the information needed to fully answer the `question`?
+- Penalize if critical pieces of information are missing from the retrieved context.
+- Score: 1.0 = all necessary info is present, 0.0 = key information is missing.
+
+### 5. **Context Entity Recall**
+- Are all key named entities (people, places, dates, organizations, technical terms) required for a complete answer present in the `document`?
+- Score: 1.0 = all required entities present, 0.0 = no required entities present.
+
+### 6. **Answer Semantic Similarity**
+- How semantically similar is the generated `answer` to the ideal/reference answer (if provided)?
+- Consider meaning, intent, and coverage - not just surface-level wording.
+- Score: 1.0 = semantically identical, 0.0 = completely different meaning.
+
+### 7. **Answer Correctness**
+- Is the factual content of the `answer` accurate and correct based on the `document` and/or general knowledge?
+- Penalize factual errors, contradictions, or misleading statements.
+- Score: 1.0 = fully correct, 0.0 = completely incorrect.
+
+---
+
+## OUTPUT FORMAT
+
+Return a single JSON object with the following structure:
+
+{
+    "out_of_scope_question": {
+        "question": "<Your generated out-of-scope question>",
+        "ground_truth": "The answer to this question is not present in the provided document. However, the correct general answer is: <real-world answer>"
+    },
+    "ragas_evaluation": {
+        "faithfulness": {
+            "score": <0.0 - 1.0>,
+            "justification": "<brief explanation>"
+        },
+        "answer_relevance": {
+            "score": <0.0 - 1.0>,
+            "justification": "<brief explanation>"
+        },
+        "context_precision": {
+            "score": <0.0 - 1.0>,
+            "justification": "<brief explanation>"
+        },
+        "context_recall": {
+            "score": <0.0 - 1.0>,
+            "justification": "<brief explanation>"
+        },
+        "context_entity_recall": {
+            "score": <0.0 - 1.0>,
+            "justification": "<brief explanation>"
+        },
+        "answer_semantic_similarity": {
+            "score": <0.0 - 1.0>,
+            "justification": "<brief explanation>"
+        },
+        "answer_correctness": {
+            "score": <0.0 - 1.0>,
+            "justification": "<brief explanation>"
+        }
+    },
+    "overall_rag_quality_score": <weighted average of all scores, 0.0 - 1.0>
+}
+
+Return ONLY the JSON object. No preamble, no markdown fences, no extra commentary.
 """
 
-async def judge_verdict(question: str, response: str, contexts: list[str], ground_truth: str) -> tuple[str, str]:
-    prompt = build_judge_prompt(question, response, contexts, ground_truth)
+def build_ragas_eval_prompt(document: str, question: str, answer: str) -> str:
+        return f"""{RAGAS_EVAL_PROMPT}
+
+document:
+{document}
+
+question:
+{question}
+
+answer:
+{answer}
+"""
+
+def coerce_score(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+def extract_json_object(text: str) -> dict | None:
+    match = JSON_OBJECT_PATTERN.search(text)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+
+async def judge_ragas_eval(question: str, response: str, contexts: list[str]) -> tuple[dict | None, str]:
+    document = "\n\n".join(contexts)
+    prompt = build_ragas_eval_prompt(document=document, question=question, answer=response)
     completion = await judge_client.chat.completions.create(
         model=JUDGE_MODEL,
         messages=[
@@ -80,17 +215,48 @@ async def judge_verdict(question: str, response: str, contexts: list[str], groun
             {"role": "user", "content": prompt},
         ],
         temperature=0,
-        max_tokens=200,
+        max_tokens=700,
     )
     content = completion.choices[0].message.content or ""
-    match = VERDICT_PATTERN.search(content)
-    verdict = match.group(1).title() if match else "Irrelevant"
-    return verdict, content.strip()
+    payload = extract_json_object(content)
+    return payload, content.strip()
+
+def verdict_from_ragas(payload: dict | None) -> tuple[str, str]:
+    if not payload:
+        return "Irrelevant", "No valid evaluation JSON returned."
+    metrics = payload.get("ragas_evaluation", {}) or {}
+    faithfulness = metrics.get("faithfulness", {}) or {}
+    answer_relevance = metrics.get("answer_relevance", {}) or {}
+    faith_score = coerce_score(faithfulness.get("score"))
+    relevance_score = coerce_score(answer_relevance.get("score"))
+
+    if faith_score is not None and faith_score < 0.5:
+        return "Hallucinated", faithfulness.get("justification", "")
+    if relevance_score is not None and relevance_score < 0.5:
+        return "Irrelevant", answer_relevance.get("justification", "")
+    return "Excellent", answer_relevance.get("justification", "") or faithfulness.get("justification", "")
 
 # ─────────────────────────────────────────────────────────────────────
 # 3. DATASET GENERATION FROM CHUNKS
 # ─────────────────────────────────────────────────────────────────────
 QA_JSON_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
+DOC_SCOPE = "the provided document"
+
+QA_PROMPT_TEMPLATE = """Generate ONE question and its ground-truth answer strictly from the context.
+Return a JSON object with keys: question, ground_truth.
+
+Context:
+{context}
+
+JSON:"""
+
+OOD_PROMPT_TEMPLATE = """Generate ONE question that is OUT OF SCOPE for {doc_scope}.
+The question should be answerable in general, but not from {doc_scope}.
+Return a JSON object with keys: question, ground_truth.
+
+Use ground_truth to say the answer is not in the document.
+
+JSON:"""
 
 def load_chunks_jsonl(path: str) -> list[str]:
     chunks = []
@@ -105,13 +271,7 @@ def load_chunks_jsonl(path: str) -> list[str]:
     return chunks
 
 async def generate_qa_from_chunk(chunk_text: str) -> dict | None:
-    prompt = f"""Generate ONE question and its ground-truth answer strictly from the context.
-Return a JSON object with keys: question, ground_truth.
-
-Context:
-{chunk_text}
-
-JSON:"""
+    prompt = QA_PROMPT_TEMPLATE.format(context=chunk_text)
     completion = await judge_client.chat.completions.create(
         model=GENERATOR_MODEL,
         messages=[
@@ -139,13 +299,7 @@ JSON:"""
     }
 
 async def generate_ood_question() -> dict | None:
-    prompt = """Generate ONE question that is OUT OF SCOPE for a travel/tourism report.
-The question should be answerable in general, but not from the report.
-Return a JSON object with keys: question, ground_truth.
-
-Use ground_truth to say the answer is not in the document.
-
-JSON:"""
+    prompt = OOD_PROMPT_TEMPLATE.format(doc_scope=DOC_SCOPE)
     completion = await judge_client.chat.completions.create(
         model=GENERATOR_MODEL,
         messages=[
@@ -270,7 +424,7 @@ def retrieval_metrics(gold_context: str | None, retrieved_texts: list[str]) -> d
 # 5. FIXED RAG STUDENT (Fixed Tuple Error + Logic for Relevancy)
 # ─────────────────────────────────────────────────────────────────────
 def get_student_response(question: str) -> tuple[str, list[str], float, list[str]]:
-    from vector_store import hybrid_retrieve
+    from APP.vector_store import hybrid_retrieve
     # top_n=5 gives more evidence to increase Faithfulness
     start = time.time()
     docs_with_scores = hybrid_retrieve(question, vs, bm25, chunks_ref, top_n=5)
@@ -309,12 +463,21 @@ async def run_eval_experiment(row):
         rm = retrieval_metrics(None if ood else gold_context, retrieved_texts)
         
         # Step 2: Run Judge
-        verdict, reason = await judge_verdict(
+        ragas_payload, ragas_raw = await judge_ragas_eval(
             question=row["question"],
             response=answer,
             contexts=contexts,
-            ground_truth=row["ground_truth"],
         )
+        verdict, reason = verdict_from_ragas(ragas_payload)
+
+        ragas_eval = (ragas_payload or {}).get("ragas_evaluation", {}) or {}
+        ragas_overall = coerce_score((ragas_payload or {}).get("overall_rag_quality_score"))
+
+        def _metric_score(key: str) -> float | None:
+            return coerce_score((ragas_eval.get(key, {}) or {}).get("score"))
+
+        def _metric_justification(key: str) -> str | None:
+            return (ragas_eval.get(key, {}) or {}).get("justification")
 
         em = exact_match(answer, row["ground_truth"]) if not ood else None
         f1 = token_f1(answer, row["ground_truth"]) if not ood else None
@@ -329,6 +492,22 @@ async def run_eval_experiment(row):
             "retrieval_ms": round(retrieval_ms, 2),
             "ood": ood,
             "gold_context": gold_context,
+            "ragas_overall": ragas_overall,
+            "ragas_faithfulness": _metric_score("faithfulness"),
+            "ragas_answer_relevance": _metric_score("answer_relevance"),
+            "ragas_context_precision": _metric_score("context_precision"),
+            "ragas_context_recall": _metric_score("context_recall"),
+            "ragas_context_entity_recall": _metric_score("context_entity_recall"),
+            "ragas_answer_semantic_similarity": _metric_score("answer_semantic_similarity"),
+            "ragas_answer_correctness": _metric_score("answer_correctness"),
+            "ragas_faithfulness_justification": _metric_justification("faithfulness"),
+            "ragas_answer_relevance_justification": _metric_justification("answer_relevance"),
+            "ragas_context_precision_justification": _metric_justification("context_precision"),
+            "ragas_context_recall_justification": _metric_justification("context_recall"),
+            "ragas_context_entity_recall_justification": _metric_justification("context_entity_recall"),
+            "ragas_answer_semantic_similarity_justification": _metric_justification("answer_semantic_similarity"),
+            "ragas_answer_correctness_justification": _metric_justification("answer_correctness"),
+            "ragas_raw": ragas_raw,
             "retrieval_hit_rank": rm["retrieval_hit_rank"],
             "retrieval_mrr": rm["retrieval_mrr"],
             "context_precision": rm["context_precision"],
@@ -386,6 +565,9 @@ async def main():
     total_n = len(df)
     avg_retrieval_ms = df["retrieval_ms"].mean()
     p95_retrieval_ms = df["retrieval_ms"].quantile(0.95)
+    ragas_avg = None
+    if "ragas_overall" in df.columns and df["ragas_overall"].notna().any():
+        ragas_avg = df["ragas_overall"].mean()
 
     df_in = df[df["ood"] == False]
     df_ood = df[df["ood"] == True]
@@ -415,6 +597,8 @@ async def main():
         f"🏁 EVALUATION COMPLETE | Time: {elapsed}s | "
         f"Avg Retrieval: {avg_retrieval_ms:.1f}ms | P95: {p95_retrieval_ms:.1f}ms"
     )
+    if ragas_avg is not None:
+        print(f"RAGAS Overall Avg: {ragas_avg:.3f}")
     print(
         f"IN-SCOPE (N={in_n}) | "
         f"Answer Relevance: {in_relevance_rate:.1f}% | "
