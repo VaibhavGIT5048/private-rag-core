@@ -6,29 +6,20 @@ import random
 import re
 import pickle
 import sys
+import hashlib
 from pathlib import Path
 import pandas as pd
 import time
 from openai import AsyncOpenAI
+
+def experiment(*args, **kwargs):
+    return lambda fn: fn
 
 # Ensure project root is on sys.path when running as a script.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-try:
-    from ragas import experiment
-except Exception as exc:
-    def experiment(*args, **kwargs):
-        def decorator(fn):
-            return fn
-        return decorator
-
-    print(
-        "⚠️ Ragas import failed; running evaluation without ragas decorator. "
-        "Install langchain-google-vertexai or pin compatible ragas/langchain-community. "
-        f"Error: {exc}"
-    )
 from langchain_ollama import OllamaLLM
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -38,12 +29,26 @@ from langchain_community.vectorstores import FAISS
 # ─────────────────────────────────────────────────────────────────────
 print("🚀 Initializing High-Performance Evaluation Engine...")
 
+def _default_concurrency() -> int:
+    cpu = os.cpu_count() or 1
+    return max(1, cpu)
+
 # Ollama OpenAI-compatible endpoint (best speed + structured eval support)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "ollama")
 STUDENT_MODEL = os.getenv("OLLAMA_STUDENT_MODEL", "llama3.1:8b")
-JUDGE_MODEL = os.getenv("OLLAMA_JUDGE_MODEL", STUDENT_MODEL)
+JUDGE_MODEL = os.getenv("OLLAMA_JUDGE_MODEL", "mistral")
 GENERATOR_MODEL = os.getenv("OLLAMA_GENERATOR_MODEL", STUDENT_MODEL)
+EVAL_CONCURRENCY = int(os.getenv("EVAL_CONCURRENCY", "10"))
+GEN_CONCURRENCY = int(os.getenv("GEN_CONCURRENCY", "10"))
+JUDGE_CACHE_PATH = os.getenv("JUDGE_CACHE_PATH", "evals/judge_cache.json")
+
+if JUDGE_MODEL == STUDENT_MODEL:
+    print(
+        f"⚠️  WARNING: JUDGE_MODEL and STUDENT_MODEL are both '{JUDGE_MODEL}'. "
+        "A model judging its own answers inflates faithfulness scores. "
+        "Set OLLAMA_JUDGE_MODEL to a different model (e.g. mistral) in .env"
+    )
 
 # Student LLM (Lower temperature for Faithfulness)
 llm = OllamaLLM(model=STUDENT_MODEL, temperature=0)
@@ -63,13 +68,19 @@ with open("indexes/bm25_data.pkl", "rb") as f:
 # 2. JUDGE PROMPT (FAST + ROBUST PARSING)
 # ─────────────────────────────────────────────────────────────────────
 REFUSAL_PATTERN = re.compile(
-    r"\b(cannot find|not in the document|not provided in the document|not available in the document|cannot locate)\b",
+    r"\b(cannot find|not in the document|not provided|not available"
+    r"|cannot locate|don't have information|no information"
+    r"|outside the scope|not mentioned|not covered"
+    r"|based on the (provided |given )?context|cannot answer)\b",
     re.IGNORECASE,
 )
 
 JUDGE_SYSTEM = "You are a strict evaluator. Return only the JSON object requested."
 
 JSON_OBJECT_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
+
+_judge_cache: dict[str, dict] = {}
+_judge_cache_lock = asyncio.Lock()
 
 RAGAS_EVAL_PROMPT = """You are an expert evaluation assistant for Retrieval-Augmented Generation (RAG) pipelines.
 Your task is to rigorously evaluate the quality of a RAG system across ALL RAGAS metrics.
@@ -205,6 +216,25 @@ def extract_json_object(text: str) -> dict | None:
     except json.JSONDecodeError:
         return None
 
+def _load_judge_cache(path: str) -> dict[str, dict]:
+    cache_file = Path(path)
+    if not cache_file.exists():
+        return {}
+    try:
+        return json.loads(cache_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+def _save_judge_cache(path: str, cache: dict[str, dict]) -> None:
+    cache_file = Path(path)
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache_file.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def _judge_cache_key(question: str, response: str, contexts: list[str]) -> str:
+    payload = {"question": question, "answer": response, "contexts": contexts}
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
 async def judge_ragas_eval(question: str, response: str, contexts: list[str]) -> tuple[dict | None, str]:
     document = "\n\n".join(contexts)
     prompt = build_ragas_eval_prompt(document=document, question=question, answer=response)
@@ -220,6 +250,16 @@ async def judge_ragas_eval(question: str, response: str, contexts: list[str]) ->
     content = completion.choices[0].message.content or ""
     payload = extract_json_object(content)
     return payload, content.strip()
+
+async def judge_ragas_eval_cached(question: str, response: str, contexts: list[str]) -> tuple[dict | None, str]:
+    key = _judge_cache_key(question, response, contexts)
+    cached = _judge_cache.get(key)
+    if cached:
+        return cached.get("payload"), cached.get("raw", "")
+    payload, raw = await judge_ragas_eval(question=question, response=response, contexts=contexts)
+    async with _judge_cache_lock:
+        _judge_cache[key] = {"payload": payload, "raw": raw}
+    return payload, raw
 
 def verdict_from_ragas(payload: dict | None) -> tuple[str, str]:
     if not payload:
@@ -242,13 +282,39 @@ def verdict_from_ragas(payload: dict | None) -> tuple[str, str]:
 QA_JSON_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
 DOC_SCOPE = "the provided document"
 
-QA_PROMPT_TEMPLATE = """Generate ONE question and its ground-truth answer strictly from the context.
+QA_TEMPLATES = [
+    """Generate ONE specific factual question answerable from this context.
 Return a JSON object with keys: question, ground_truth.
 
 Context:
 {context}
 
-JSON:"""
+JSON:""",
+    """Generate ONE question asking about a specific number, percentage,
+or statistic from this context. If no numbers exist, generate a factual question.
+Return a JSON object with keys: question, ground_truth.
+
+Context:
+{context}
+
+JSON:""",
+    """Generate ONE question asking what something means or how something
+works based on this context.
+Return a JSON object with keys: question, ground_truth.
+
+Context:
+{context}
+
+JSON:""",
+    """Generate ONE question comparing two things or asking about
+a relationship between concepts in this context.
+Return a JSON object with keys: question, ground_truth.
+
+Context:
+{context}
+
+JSON:""",
+]
 
 OOD_PROMPT_TEMPLATE = """Generate ONE question that is OUT OF SCOPE for {doc_scope}.
 The question should be answerable in general, but not from {doc_scope}.
@@ -270,8 +336,9 @@ def load_chunks_jsonl(path: str) -> list[str]:
                 chunks.append(content)
     return chunks
 
-async def generate_qa_from_chunk(chunk_text: str) -> dict | None:
-    prompt = QA_PROMPT_TEMPLATE.format(context=chunk_text)
+async def generate_qa_from_chunk(chunk_text: str, q_type: int = 0) -> dict | None:
+    template = QA_TEMPLATES[q_type % len(QA_TEMPLATES)]
+    prompt = template.format(context=chunk_text)
     completion = await judge_client.chat.completions.create(
         model=GENERATOR_MODEL,
         messages=[
@@ -325,6 +392,23 @@ async def generate_ood_question() -> dict | None:
         "ood": True,
     }
 
+def coverage_sample(chunks: list[str], n: int, seed: int | None = None) -> list[str]:
+    if not chunks or n <= 0:
+        return []
+    n = min(n, len(chunks))
+    if seed is not None:
+        random.seed(seed)
+    step = max(len(chunks) / n, 1)
+    picks = []
+    for i in range(n):
+        start = int(i * step)
+        end = int(min((i + 1) * step, len(chunks)))
+        if end <= start:
+            end = min(start + 1, len(chunks))
+        segment = chunks[start:end]
+        picks.append(random.choice(segment))
+    return picks
+
 async def build_dataset_from_chunks(
     chunks_path: str,
     num_questions: int,
@@ -336,20 +420,17 @@ async def build_dataset_from_chunks(
     if not chunks:
         raise ValueError(f"No chunks found in {chunks_path}")
 
-    random.seed(seed)
     ood_ratio = max(0.0, min(ood_ratio, 1.0))
     ood_count = int(round(num_questions * ood_ratio))
     in_scope_count = max(num_questions - ood_count, 0)
 
-    sample = random.sample(chunks, k=min(in_scope_count, len(chunks)))
+    sample = coverage_sample(chunks, in_scope_count, seed=None)
 
-    sem_gen = asyncio.Semaphore(3)
+    async def _generate(chunk: str, q_type: int) -> dict | None:
+        async with gen_sem:
+            return await generate_qa_from_chunk(chunk[:max_chars], q_type=q_type)
 
-    async def _generate(chunk: str) -> dict | None:
-        async with sem_gen:
-            return await generate_qa_from_chunk(chunk[:max_chars])
-
-    tasks = [_generate(chunk) for chunk in sample]
+    tasks = [_generate(chunk, i % len(QA_TEMPLATES)) for i, chunk in enumerate(sample)]
     results = await asyncio.gather(*tasks)
     dataset = [r for r in results if r is not None]
 
@@ -423,47 +504,73 @@ def retrieval_metrics(gold_context: str | None, retrieved_texts: list[str]) -> d
 # ─────────────────────────────────────────────────────────────────────
 # 5. FIXED RAG STUDENT (Fixed Tuple Error + Logic for Relevancy)
 # ─────────────────────────────────────────────────────────────────────
-def get_student_response(question: str) -> tuple[str, list[str], float, list[str]]:
+def get_student_response(question: str) -> tuple[str, list[str], float]:
     from APP.vector_store import hybrid_retrieve
-    # top_n=5 gives more evidence to increase Faithfulness
+    # top_n=6 gives more evidence to increase Faithfulness
     start = time.time()
-    docs_with_scores = hybrid_retrieve(question, vs, bm25, chunks_ref, top_n=5)
+    docs_with_scores = hybrid_retrieve(question, vs, bm25, chunks_ref, top_n=6)
     retrieval_ms = (time.time() - start) * 1000.0
     
     # FIXED: Correctly unpacking the (Document, Score) tuple
     contexts = [doc.page_content for doc, score in docs_with_scores]
     
     # PROMPT TUNING: Forcing strictness to increase Relevancy/Faithfulness
-    prompt = f"""SYSTEM: You are a strict data extractor. Answer ONLY using the provided context.
-    If the answer isn't there, say "I cannot find this information in the document."
-    Do not mention your training data.
+    prompt = f"""You are an expert document analyst and retrieval-augmented AI assistant.
+
+    Your task is to answer the user's question using ONLY the information provided in the retrieved document context.
+
+    INSTRUCTIONS:
+
+    1. Read ALL retrieved chunks carefully before answering.
+    2. Information may be distributed across multiple chunks.
+    3. Combine and synthesize information from different chunks whenever necessary.
+    4. If a principle, concept, case study, example, statistic, recommendation, or conclusion appears in separate chunks, connect them logically.
+    5. If the answer is partially available across multiple chunks, construct the most complete answer possible.
+    6. Prioritize factual accuracy over brevity.
+    7. Do NOT invent, assume, or hallucinate information that is not supported by the context.
+    8. If page numbers are available in the context metadata, mention them when relevant.
+    9. If the context contains enough evidence to reasonably infer the answer, provide the answer.
+    10. Only respond with "I cannot find this information in the document." when NONE of the retrieved context is relevant to the question.
+
+    ANSWERING RULES:
+
+    * For factual questions: provide a direct answer followed by supporting details.
+    * For explanatory questions: provide a concise explanation followed by evidence from the context.
+    * For comparison questions: compare all relevant information found across chunks.
+    * For summary questions: synthesize the key ideas from all relevant chunks.
+    * For analytical questions: connect related information across chunks and explain the relationship.
 
     CONTEXT:
     {" ".join(contexts)}
 
     QUESTION: {question}
-    ANSWER (Concise):"""
+
+    FINAL ANSWER:"""
     
     answer = llm.invoke(prompt)
-    return answer, contexts, retrieval_ms, contexts
+    return answer, contexts, retrieval_ms
 
 # ─────────────────────────────────────────────────────────────────────
 # 6. ASYNC EXPERIMENT WITH PARALLEL LIMIT (3 Workers)
 # ─────────────────────────────────────────────────────────────────────
-# Semaphore ensures we never have more than 3 Ollama calls at once
-sem = asyncio.Semaphore(3)
+# Semaphores ensure we never exceed configured Ollama concurrency
+eval_sem = asyncio.Semaphore(EVAL_CONCURRENCY)
+gen_sem = asyncio.Semaphore(GEN_CONCURRENCY)
 
-@experiment()
 async def run_eval_experiment(row):
-    async with sem:
+    async with eval_sem:
         # Step 1: Run RAG
-        answer, contexts, retrieval_ms, retrieved_texts = get_student_response(row["question"])
+        answer, contexts, retrieval_ms = await asyncio.to_thread(
+            get_student_response,
+            row["question"],
+        )
+        retrieved_texts = contexts
         gold_context = row.get("gold_context")
         ood = row.get("ood", False)
         rm = retrieval_metrics(None if ood else gold_context, retrieved_texts)
         
         # Step 2: Run Judge
-        ragas_payload, ragas_raw = await judge_ragas_eval(
+        ragas_payload, ragas_raw = await judge_ragas_eval_cached(
             question=row["question"],
             response=answer,
             contexts=contexts,
@@ -521,6 +628,8 @@ async def run_eval_experiment(row):
 # 7. MAIN EXECUTION
 # ─────────────────────────────────────────────────────────────────────
 async def main():
+    global _judge_cache
+    _judge_cache = _load_judge_cache(JUDGE_CACHE_PATH)
     parser = argparse.ArgumentParser()
     parser.add_argument("--chunks", default="chunks/chunks.jsonl")
     parser.add_argument("--dataset", default="evals/datasets/auto_eval.jsonl")
@@ -530,6 +639,12 @@ async def main():
     parser.add_argument("--ood-ratio", type=float, default=0.3)
     parser.add_argument("--regenerate", action="store_true")
     args = parser.parse_args()
+
+    if "chunks_processed" not in args.chunks:
+        print(
+            "⚠️  WARNING: Running eval on raw chunks. "
+            "Use --chunks chunks/chunks_processed.jsonl for quality-gated results."
+        )
 
     os.makedirs(os.path.dirname(args.dataset), exist_ok=True)
 
@@ -552,12 +667,30 @@ async def main():
                     continue
                 dataset.append(json.loads(line))
 
-    print(f"\n📊 Starting Parallel Experiment (3 Workers)...")
+    print(f"\n📊 Starting Parallel Experiment ({EVAL_CONCURRENCY} Workers)...")
     start_time = time.time()
 
     # Create tasks for parallel execution
     tasks = [run_eval_experiment(row) for row in dataset]
-    results = await asyncio.gather(*tasks)
+    total = len(tasks)
+    done = 0
+    results = []
+    for task in asyncio.as_completed(tasks):
+        result = await task
+        results.append(result)
+        done += 1
+        elapsed = max(time.time() - start_time, 0.001)
+        rate = done / elapsed
+        eta = (total - done) / rate if rate > 0 else 0
+        bar_len = 24
+        filled = int(bar_len * done / total) if total else bar_len
+        bar = "#" * filled + "-" * (bar_len - filled)
+        sys.stdout.write(
+            f"\rProgress [{bar}] {done}/{total} | {elapsed:.0f}s elapsed | ETA {eta:.0f}s"
+        )
+        sys.stdout.flush()
+    if total:
+        print()
 
     # Report Generation
     df = pd.DataFrame(results)
@@ -618,7 +751,21 @@ async def main():
     print(df[["question", "verdict", "answer"]])
 
     os.makedirs("evals/experiments", exist_ok=True)
+    baseline_path = "evals/experiments/baseline_scores.json"
+    if not os.path.exists(baseline_path):
+        baseline = {
+            "ragas_overall": round(ragas_avg, 3) if ragas_avg is not None else None,
+            "faithfulness": round(df["ragas_faithfulness"].mean(), 3),
+            "context_precision": round(df["ragas_context_precision"].mean(), 3),
+            "ood_refusal_rate": round(ood_refusal_rate, 1),
+            "mrr": round(in_mrr, 3),
+            "timestamp": time.strftime("%Y-%m-%d %H:%M"),
+        }
+        with open(baseline_path, "w", encoding="utf-8") as f:
+            json.dump(baseline, f, indent=2)
+        print("📌 Baseline scores saved to evals/experiments/baseline_scores.json")
     df.to_csv("evals/experiments/fast_eval_report.csv", index=False)
+    _save_judge_cache(JUDGE_CACHE_PATH, _judge_cache)
 
 if __name__ == "__main__":
     asyncio.run(main())

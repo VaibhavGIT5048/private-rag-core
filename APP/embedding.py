@@ -7,22 +7,25 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 # ─────────────────────────────────────────────────────────────────────
 # 1. LOAD & FILTER PROCESSED CHUNKS
 # ─────────────────────────────────────────────────────────────────────
-def load_filtered_chunks(input_path: str) -> list[Document]:
+def load_filtered_chunks(input_path: str, passed_only: bool = False) -> list[Document]:
     """
-    Loads only the chunks that passed the quality gate.
+    Loads chunks from the processed JSONL file.
     """
     passed_chunks = []
     with open(input_path, "r", encoding="utf-8") as f:
         for line in f:
             record = json.loads(line)
-            # Only keep chunks tagged as 'true' by our Phase 3 gate
-            if record["metadata"].get("passed_gate") is True:
-                passed_chunks.append(Document(
-                    page_content=record["page_content"],
-                    metadata=record["metadata"]
-                ))
+            if passed_only and record["metadata"].get("passed_gate") is not True:
+                continue
+            passed_chunks.append(Document(
+                page_content=record["page_content"],
+                metadata=record["metadata"]
+            ))
     
-    print(f"📥 Loaded {len(passed_chunks)} high-quality chunks from {input_path}")
+    if passed_only:
+        print(f"📥 Loaded {len(passed_chunks)} high-quality chunks from {input_path}")
+    else:
+        print(f"📥 Loaded {len(passed_chunks)} chunks from {input_path}")
     return passed_chunks
 
 # ─────────────────────────────────────────────────────────────────────

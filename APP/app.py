@@ -1,17 +1,22 @@
+import os
+import sys
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import streamlit as st
 from langchain_core.documents import Document
 from langchain_ollama import OllamaLLM
 
 from APP.chunking import chunk_documents, save_chunks_jsonl
-from APP.pdf_loading import load_pdf
+from APP.pdf_loading import load_pdf, load_pdfs
 from APP.quality_gate import apply_quality_gate, save_chunks_jsonl as save_processed_jsonl
 from APP.vector_store import build_hybrid_indices, hybrid_retrieve, expand_with_neighbors
-from dotenv import load_dotenv
-import os
-
-load_dotenv() 
 
 host = os.getenv("OLLAMA_HOST")
 
@@ -37,6 +42,7 @@ INSTRUCTIONS:
 8. If page numbers are available in the context metadata, mention them when relevant.
 9. If the context contains enough evidence to reasonably infer the answer, provide the answer.
 10. Only respond with "I cannot find this information in the document." when NONE of the retrieved context is relevant to the question.
+11. Cite sources inline using this format: [Source: <pdf_name> | Page: <page_no>] for key claims.
 
 ANSWERING RULES:
 
@@ -102,24 +108,47 @@ def main() -> None:
         top_n = st.slider("Retrieved chunks", min_value=1, max_value=8, value=4)
         show_sources = st.checkbox("Show retrieved chunks", value=True)
 
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-    if uploaded_file is not None:
+    uploaded_files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
+    if uploaded_files:
         data_dir = Path("data")
         data_dir.mkdir(parents=True, exist_ok=True)
-        pdf_path = data_dir / uploaded_file.name
-        with open(pdf_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.success(f"Uploaded: {uploaded_file.name}")
+        saved_paths = []
+        for uf in uploaded_files:
+            pdf_path = data_dir / uf.name
+            with open(pdf_path, "wb") as f:
+                f.write(uf.getbuffer())
+            saved_paths.append(pdf_path)
 
-        if st.button("Process PDF and Build RAG Index", type="primary"):
+        st.session_state.pdf_names = [p.name for p in saved_paths]
+        st.success(f"Uploaded {len(saved_paths)} PDFs")
+
+        if st.button("Process PDFs and Build RAG Index", type="primary"):
             with st.spinner("Running PDF loading, chunking, quality gate, and indexing..."):
                 try:
-                    vectorstore, bm25, retrieval_chunks, all_chunks, stats = process_uploaded_pdf(
-                        pdf_path=pdf_path,
-                        chunk_size=chunk_size,
-                        chunk_overlap=chunk_overlap,
-                        quality_threshold=quality_threshold,
-                    )
+                    pages = load_pdfs(saved_paths)
+                    docs = [Document(page_content=p.page_content, metadata=p.metadata) for p in pages]
+                    chunks = chunk_documents(docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+                    Path("chunks").mkdir(parents=True, exist_ok=True)
+                    save_chunks_jsonl(chunks, "chunks/chunks.jsonl")
+
+                    processed_chunks = apply_quality_gate(chunks, threshold_score=quality_threshold)
+                    save_processed_jsonl(processed_chunks, "chunks/chunks_processed.jsonl")
+                    passed_chunks = [c for c in processed_chunks if c.metadata.get("passed_gate") is True]
+                    retrieval_chunks = [c for c in processed_chunks if c.page_content.strip()]
+
+                    if not retrieval_chunks:
+                        raise RuntimeError("No retrievable chunks were produced. Inspect document extraction quality.")
+
+                    vectorstore, bm25 = build_hybrid_indices(retrieval_chunks)
+                    stats = {
+                        "pdfs": len(saved_paths),
+                        "pages": len(docs),
+                        "chunks": len(chunks),
+                        "passed_chunks": len(passed_chunks),
+                        "dropped_chunks": len(chunks) - len(passed_chunks),
+                        "indexed_chunks": len(retrieval_chunks),
+                    }
                 except Exception as exc:
                     st.error(f"Pipeline failed: {exc}")
                     return
@@ -127,15 +156,15 @@ def main() -> None:
             st.session_state.vectorstore = vectorstore
             st.session_state.bm25 = bm25
             st.session_state.retrieval_chunks = retrieval_chunks
-            st.session_state.chunks = all_chunks
+            st.session_state.chunks = processed_chunks
             st.session_state.pipeline_stats = stats
             st.session_state.chat_history = []
-            st.success("RAG pipeline is ready for chat.")
+            st.success("Multi-PDF RAG pipeline is ready for chat.")
 
     if "pipeline_stats" in st.session_state:
         s = st.session_state.pipeline_stats
         st.info(
-            f"Pages: {s['pages']} | Chunks: {s['chunks']} | "
+            f"PDFs: {s.get('pdfs', 1)} | Pages: {s['pages']} | Chunks: {s['chunks']} | "
             f"Passed Gate: {s['passed_chunks']} | Failed Gate: {s['dropped_chunks']} | "
             f"Indexed: {s.get('indexed_chunks', s['passed_chunks'])}"
         )
@@ -176,14 +205,22 @@ def main() -> None:
                 )
                 contexts = []
                 for doc in expanded_docs:
-                    page = doc.metadata.get("page")
-                    if page is not None:
-                        contexts.append(f"[Page {page}] {doc.page_content}")
-                    else:
-                        contexts.append(doc.page_content)
+                    source = doc.metadata.get("source", "unknown.pdf")
+                    page = doc.metadata.get("page", "?")
+                    contexts.append(f"[Source: {source} | Page: {page}] {doc.page_content}")
                 prompt = build_prompt(question, contexts)
+                stats = st.session_state.get("pipeline_stats", {})
+                trace_config = {
+                    "metadata": {
+                        "pdf_name": ", ".join(st.session_state.get("pdf_names", ["unknown"])),
+                        "quality_threshold": quality_threshold,
+                        "chunks_retrieved": top_n,
+                        "chunks_total": stats.get("chunks", 0),
+                        "chunks_indexed": stats.get("indexed_chunks", 0),
+                    }
+                }
                 llm = OllamaLLM(model=model_name, temperature=0)
-                answer = llm.invoke(prompt)
+                answer = llm.invoke(prompt, config=trace_config)
             except Exception as exc:
                 st.error(f"RAG request failed: {exc}")
                 return
@@ -194,10 +231,11 @@ def main() -> None:
         if show_sources:
             with st.expander("Retrieved Chunks"):
                 for idx, (doc, score) in enumerate(results, start=1):
+                    source = doc.metadata.get("source", "unknown.pdf")
                     page = doc.metadata.get("page", "?")
                     chunk_id = doc.metadata.get("chunk_id", "?")
                     st.markdown(
-                        f"**#{idx}** | Score: `{score:.4f}` | Page: `{page}` | Chunk: `{chunk_id}`"
+                        f"**#{idx}** | Score: `{score:.4f}` | Source: `{source}` | Page: `{page}` | Chunk: `{chunk_id}`"
                     )
                     st.write(doc.page_content[:800] + ("..." if len(doc.page_content) > 800 else ""))
                     st.divider()

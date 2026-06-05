@@ -3,19 +3,6 @@ import json
 import re
 from pathlib import Path
 import tiktoken
-# spacy is optional for UI/fast runs; use a lightweight fallback when unavailable
-try:
-    import spacy
-    try:
-        nlp = spacy.load("en_core_web_sm")
-        SPACY_AVAILABLE = True
-    except Exception:
-        nlp = None
-        SPACY_AVAILABLE = False
-except Exception:
-    nlp = None
-    SPACY_AVAILABLE = False
-import numpy as np  # Added to help with type handling if needed
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -34,6 +21,20 @@ MAX_SCORE = 7
 TOKEN_MIN, TOKEN_MAX = 50, 300
 URL_COUNT_MAX, URL_CHAR_RATIO_MAX = 2, 0.15
 URL_PATTERN = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+GOOD_END = {".", "!", "?"}
+WEAK_END = {";"}
+
+
+def _content_richness(text: str) -> float:
+    """Fraction of characters that are alphabetic."""
+    return sum(c.isalpha() for c in text) / max(len(text), 1)
+
+
+def _same_section(prev: Document, curr: Document) -> bool:
+    return (
+        prev.metadata.get("page") == curr.metadata.get("page")
+        or prev.metadata.get("section") == curr.metadata.get("section")
+    )
 
 # ─────────────────────────────────────────────────────────────────────
 # THE REFINED QUALITY EVALUATOR
@@ -59,33 +60,26 @@ def evaluate_chunk_refined(current_chunk: Document, previous_chunk: Document | N
 
     # 2. X_P (Refined Punctuation)
     clean_text = text.rstrip()
-    if clean_text.endswith(('.', '!', '?', ',', ';', ':')):
+    starts_mid = bool(clean_text) and clean_text[0].islower()
+    ends_good = clean_text[-1] in GOOD_END if clean_text else False
+    ends_weak = clean_text[-1] in WEAK_END if clean_text else False
+
+    if ends_good and not starts_mid:
         features["X_P"] = 1
         score += (1 * W_PUNC)
-    elif clean_text and clean_text[-1].isalnum():
+    elif ends_weak or (ends_good and starts_mid):
         features["X_P"] = 0.5
         score += (0.5 * W_PUNC)
 
-    # 3. X_E (Entity Density)
-    if nlp is not None:
-        doc = nlp(text[:2000])
-        token_len = len([t for t in doc if not t.is_space])
-        density = len(doc.ents) / token_len if token_len > 0 else 0
-    else:
-        # Lightweight heuristic fallback: count occurrences of Titlecase tokens/phrases
-        snippet = text[:2000]
-        token_len = len(re.findall(r"\S+", snippet))
-        # match sequences like 'New York' or single Titlecase words
-        matches = re.findall(r"\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*\b", snippet)
-        density = len(matches) / token_len if token_len > 0 else 0
-
-    if density >= 0.02:
+    # 3. X_E (Content Richness)
+    content_richness = _content_richness(text)
+    if content_richness >= 0.45:
         features["X_E"] = 1
         score += (1 * W_ENTITIES)
 
-    # 4. X_C (Refined Overlap - FIXED SERIALIZATION HERE)
+    # 4. X_C (Refined Overlap)
     overlap_sim = 0.0
-    if previous_chunk is None:
+    if previous_chunk is None or not _same_section(previous_chunk, current_chunk):
         features["X_C"] = 1
         score += (1 * W_OVERLAP)
     else:
@@ -93,7 +87,7 @@ def evaluate_chunk_refined(current_chunk: Document, previous_chunk: Document | N
         # FIX: Explicitly cast the numpy float32 to a standard Python float
         overlap_sim = float(cosine_similarity([embeddings[0]], [embeddings[1]])[0][0])
         
-        if 0.05 <= overlap_sim <= 0.45:
+        if 0.05 <= overlap_sim <= 0.95:
             features["X_C"] = 1
             score += (1 * W_OVERLAP)
 
@@ -102,7 +96,7 @@ def evaluate_chunk_refined(current_chunk: Document, previous_chunk: Document | N
         "features_passed": features,
         "metrics": {
             "token_count": token_count,
-            "entity_density": round(float(density), 3),
+            "content_richness": round(float(content_richness), 3),
             "overlap_similarity": round(overlap_sim, 3)
         }
     }

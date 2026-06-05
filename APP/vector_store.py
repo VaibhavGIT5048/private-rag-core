@@ -75,8 +75,19 @@ def build_hybrid_indices(chunks):
 # ─────────────────────────────────────────────────────────────────────
 # 3. HYBRID RETRIEVAL (RRF)
 # ─────────────────────────────────────────────────────────────────────
+def apply_quality_penalty(chunks, base_scores):
+    penalised = []
+    for chunk, score in zip(chunks, base_scores):
+        gate = chunk.metadata.get("passed_gate", False)
+        weight = 1.0 if gate else 0.7
+        penalised.append((chunk, score * weight))
+    return sorted(penalised, key=lambda x: x[1], reverse=True)
+
+
 def hybrid_retrieve(query, vectorstore, bm25, chunks, k=60, top_n=3):
     candidate_k = max(top_n * 6, 20)
+    faiss_weight = 0.4
+    bm25_weight = 0.6
 
     # 1. Semantic Search
     semantic_results = vectorstore.similarity_search(query, k=min(candidate_k, len(chunks)))
@@ -94,15 +105,20 @@ def hybrid_retrieve(query, vectorstore, bm25, chunks, k=60, top_n=3):
     for rank, doc in enumerate(semantic_results, 1):
         cid = doc.metadata["chunk_id"]
         doc_map[cid] = doc
-        rrf_scores[cid] = rrf_scores.get(cid, 0) + 1.0 / (k + rank)
+        rrf_scores[cid] = rrf_scores.get(cid, 0) + (faiss_weight / (k + rank))
 
     for rank, doc in enumerate(keyword_results, 1):
         cid = doc.metadata["chunk_id"]
         doc_map[cid] = doc
-        rrf_scores[cid] = rrf_scores.get(cid, 0) + 1.0 / (k + rank)
+        rrf_scores[cid] = rrf_scores.get(cid, 0) + (bm25_weight / (k + rank))
 
     sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-    return [(doc_map[cid], score) for cid, score in sorted_results[:top_n]]
+    base_results = [(doc_map[cid], score) for cid, score in sorted_results]
+    penalised = apply_quality_penalty(
+        chunks=[doc for doc, _ in base_results],
+        base_scores=[score for _, score in base_results],
+    )
+    return penalised[:top_n]
 
 
 def expand_with_neighbors(
