@@ -11,9 +11,6 @@ except ModuleNotFoundError:
     pdfplumber = None
     from pypdf import PdfReader
 
-# ─────────────────────────────────────────────────────────────────────
-# CONFIGURATION & LOGGING
-# ─────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -21,22 +18,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────────────────────────────
-# DATA STRUCTURE
-# ─────────────────────────────────────────────────────────────────────
+
 @dataclass
 class PageContent:
-    """Represents a single extracted PDF page with associated metadata."""
     page_content: str
     metadata: dict
 
-# ─────────────────────────────────────────────────────────────────────
-# CORE PDF LOADER
-# ─────────────────────────────────────────────────────────────────────
+
 def load_pdf(pdf_path: str | Path) -> List[PageContent]:
-    """
-    Extract text from a PDF, preserving complex layouts and skipping blank pages.
-    """
     path = Path(pdf_path)
     if not path.is_file():
         raise FileNotFoundError(f"PDF not found: {path.absolute()}")
@@ -48,16 +37,11 @@ def load_pdf(pdf_path: str | Path) -> List[PageContent]:
         if pdfplumber is not None:
             with pdfplumber.open(path) as pdf:
                 total_pages = len(pdf.pages)
-
                 for page_num, page in enumerate(pdf.pages, start=1):
-                    # Extract and strip whitespace immediately
                     text = (page.extract_text() or "").strip()
-
-                    # Filter out blank pages
                     if not text:
                         blank_pages += 1
                         continue
-
                     documents.append(PageContent(
                         page_content=text,
                         metadata={
@@ -96,14 +80,22 @@ def load_pdf(pdf_path: str | Path) -> List[PageContent]:
         f"Processed '{path.name}': {len(documents)} pages loaded, "
         f"{blank_pages} blank skipped, {total_chars:,} total chars."
     )
-
     return documents
 
-# ─────────────────────────────────────────────────────────────────────
-# HELPER: PREVIEW
-# ─────────────────────────────────────────────────────────────────────
+
+def load_pdfs(pdf_paths: list[str | Path]) -> List[PageContent]:
+    all_docs: List[PageContent] = []
+    for pdf_path in pdf_paths:
+        docs = load_pdf(pdf_path)
+        all_docs.extend(docs)
+
+    logger.info(
+        f"Processed {len(pdf_paths)} PDFs -> {len(all_docs)} total extracted pages."
+    )
+    return all_docs
+
+
 def preview_pages(documents: List[PageContent], n: int = 2, preview_chars: int = 400) -> None:
-    """Helper to preview the first N pages for extraction sanity checks."""
     if not documents:
         logger.warning("No documents to preview.")
         return
@@ -112,15 +104,11 @@ def preview_pages(documents: List[PageContent], n: int = 2, preview_chars: int =
     for doc in documents[:n]:
         meta = doc.metadata
         print(f"\n── Page {meta['page']} of {meta['total_pages']} ({meta['char_count']} chars) ──")
-        
         content = doc.page_content
         print(content[:preview_chars] + ("..." if len(content) > preview_chars else ""))
-        
     print(f"\n{'═'*60}\n")
 
-# ─────────────────────────────────────────────────────────────────────
-# CLI EXECUTION SCRIPT
-# ─────────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     def choose_pdf() -> Path:
         pdf_dir = Path("data")
