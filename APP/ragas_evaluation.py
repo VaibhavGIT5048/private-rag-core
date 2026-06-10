@@ -188,8 +188,46 @@ Return a single JSON object with the following structure:
 Return ONLY the JSON object. No preamble, no markdown fences, no extra commentary.
 """
 
+OOD_JUDGE_PROMPT = """You are an expert evaluator for out-of-scope (OOD) RAG answers.
+Your task is to classify the answer into exactly ONE of these categories:
+
+1) correct_refusal: The answer explicitly states the information is not available in the provided document/context.
+2) hallucinated: The answer provides unsupported facts or claims not grounded in the provided context.
+3) irrelevant: The answer does not meaningfully address the question and is not a proper refusal.
+
+Return a single JSON object with this exact schema:
+
+{
+    "correct_refusal": true/false,
+    "hallucinated": true/false,
+    "irrelevant": true/false,
+    "reason": "short explanation"
+}
+
+Rules:
+- Exactly ONE of correct_refusal, hallucinated, irrelevant must be true.
+- correct_refusal is true ONLY if the answer explicitly says the information is not in the document.
+- hallucinated is true if the answer introduces unsupported facts.
+- irrelevant is true if the answer neither refuses nor answers meaningfully.
+
+Return ONLY the JSON object. No preamble, no markdown fences, no extra commentary.
+"""
+
 def build_ragas_eval_prompt(document: str, question: str, answer: str) -> str:
         return f"""{RAGAS_EVAL_PROMPT}
+
+document:
+{document}
+
+question:
+{question}
+
+answer:
+{answer}
+"""
+
+def build_ood_eval_prompt(document: str, question: str, answer: str) -> str:
+    return f"""{OOD_JUDGE_PROMPT}
 
 document:
 {document}
@@ -251,6 +289,22 @@ async def judge_ragas_eval(question: str, response: str, contexts: list[str]) ->
     payload = extract_json_object(content)
     return payload, content.strip()
 
+async def judge_ood_eval(question: str, response: str, contexts: list[str]) -> tuple[dict | None, str]:
+    document = "\n\n".join(contexts)
+    prompt = build_ood_eval_prompt(document=document, question=question, answer=response)
+    completion = await judge_client.chat.completions.create(
+        model=JUDGE_MODEL,
+        messages=[
+            {"role": "system", "content": JUDGE_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0,
+        max_tokens=300,
+    )
+    content = completion.choices[0].message.content or ""
+    payload = extract_json_object(content)
+    return payload, content.strip()
+
 async def judge_ragas_eval_cached(question: str, response: str, contexts: list[str]) -> tuple[dict | None, str]:
     key = _judge_cache_key(question, response, contexts)
     cached = _judge_cache.get(key)
@@ -275,6 +329,27 @@ def verdict_from_ragas(payload: dict | None) -> tuple[str, str]:
     if relevance_score is not None and relevance_score < 0.5:
         return "Irrelevant", answer_relevance.get("justification", "")
     return "Excellent", answer_relevance.get("justification", "") or faithfulness.get("justification", "")
+
+def normalize_ood_judgment(payload: dict | None) -> tuple[str, str, dict]:
+    if not payload:
+        outcome = "Irrelevant"
+        reason = "No valid OOD evaluation JSON returned."
+        flags = {"correct_refusal": False, "hallucinated": False, "irrelevant": True}
+        return outcome, reason, flags
+
+    correct_refusal = bool(payload.get("correct_refusal"))
+    hallucinated = bool(payload.get("hallucinated"))
+    irrelevant = bool(payload.get("irrelevant"))
+    reason = (payload.get("reason") or "").strip()
+
+    if correct_refusal:
+        flags = {"correct_refusal": True, "hallucinated": False, "irrelevant": False}
+        return "Correct Refusal", reason, flags
+    if hallucinated:
+        flags = {"correct_refusal": False, "hallucinated": True, "irrelevant": False}
+        return "Hallucinated", reason, flags
+    flags = {"correct_refusal": False, "hallucinated": False, "irrelevant": True}
+    return "Irrelevant", reason, flags
 
 # ─────────────────────────────────────────────────────────────────────
 # 3. DATASET GENERATION FROM CHUNKS
@@ -575,7 +650,31 @@ async def run_eval_experiment(row):
             response=answer,
             contexts=contexts,
         )
-        verdict, reason = verdict_from_ragas(ragas_payload)
+
+        ood_payload = None
+        ood_raw = ""
+        ood_outcome = None
+        ood_reason = ""
+        ood_flags = {"correct_refusal": False, "hallucinated": False, "irrelevant": False}
+
+        refused = bool(REFUSAL_PATTERN.search(answer))
+        retrieval_hit = rm["context_recall"] == 1.0 if rm["context_recall"] is not None else False
+
+        if ood:
+            ood_payload, ood_raw = await judge_ood_eval(
+                question=row["question"],
+                response=answer,
+                contexts=contexts,
+            )
+            ood_outcome, ood_reason, ood_flags = normalize_ood_judgment(ood_payload)
+            verdict, reason = ood_outcome, ood_reason
+        else:
+            if refused and retrieval_hit:
+                verdict, reason = "False Refusal", "The answer refused despite retrieval hitting the gold context."
+            elif refused and not retrieval_hit:
+                verdict, reason = "Correct Refusal", "The answer refused and retrieval did not hit the gold context."
+            else:
+                verdict, reason = verdict_from_ragas(ragas_payload)
 
         ragas_eval = (ragas_payload or {}).get("ragas_evaluation", {}) or {}
         ragas_overall = coerce_score((ragas_payload or {}).get("overall_rag_quality_score"))
@@ -588,7 +687,7 @@ async def run_eval_experiment(row):
 
         em = exact_match(answer, row["ground_truth"]) if not ood else None
         f1 = token_f1(answer, row["ground_truth"]) if not ood else None
-        refused = bool(REFUSAL_PATTERN.search(answer)) if ood else None
+        refused = refused if not ood else ood_flags["correct_refusal"]
         
         return {
             "question": row["question"],
@@ -615,6 +714,12 @@ async def run_eval_experiment(row):
             "ragas_answer_semantic_similarity_justification": _metric_justification("answer_semantic_similarity"),
             "ragas_answer_correctness_justification": _metric_justification("answer_correctness"),
             "ragas_raw": ragas_raw,
+            "ood_raw": ood_raw,
+            "ood_correct_refusal": ood_flags["correct_refusal"],
+            "ood_hallucinated": ood_flags["hallucinated"],
+            "ood_irrelevant": ood_flags["irrelevant"],
+            "ood_reason": ood_reason,
+            "retrieval_hit": retrieval_hit if not ood else None,
             "retrieval_hit_rank": rm["retrieval_hit_rank"],
             "retrieval_mrr": rm["retrieval_mrr"],
             "context_precision": rm["context_precision"],
@@ -710,10 +815,14 @@ async def main():
 
     in_excellent_n = (df_in["verdict"] == "Excellent").sum()
     in_hallucinated_n = (df_in["verdict"] == "Hallucinated").sum()
+    in_false_refusal_n = (df_in["verdict"] == "False Refusal").sum()
+    in_correct_refusal_n = (df_in["verdict"] == "Correct Refusal").sum()
     in_irrelevant_n = (df_in["verdict"] == "Irrelevant").sum()
 
     in_relevance_rate = (in_excellent_n / in_n) * 100 if in_n else 0.0
     in_hallucination_rate = (in_hallucinated_n / in_n) * 100 if in_n else 0.0
+    in_false_refusal_rate = (in_false_refusal_n / in_n) * 100 if in_n else 0.0
+    in_correct_refusal_rate = (in_correct_refusal_n / in_n) * 100 if in_n else 0.0
     in_irrelevance_rate = (in_irrelevant_n / in_n) * 100 if in_n else 0.0
     in_faithfulness_rate = 100.0 - in_hallucination_rate
     in_em = df_in["exact_match"].mean() * 100 if in_n else 0.0
@@ -722,8 +831,9 @@ async def main():
     in_mrr = df_in["retrieval_mrr"].mean() if in_n else 0.0
     in_ctx_precision = df_in["context_precision"].mean() * 100 if in_n else 0.0
 
-    ood_refusal_rate = df_ood["refused"].mean() * 100 if ood_n else 0.0
-    ood_hallucination_rate = (df_ood["verdict"] == "Hallucinated").sum() / ood_n * 100 if ood_n else 0.0
+    ood_refusal_rate = df_ood["ood_correct_refusal"].mean() * 100 if ood_n else 0.0
+    ood_hallucination_rate = df_ood["ood_hallucinated"].mean() * 100 if ood_n else 0.0
+    ood_irrelevant_rate = df_ood["ood_irrelevant"].mean() * 100 if ood_n else 0.0
 
     print(f"\n{'═'*60}")
     print(
@@ -737,16 +847,18 @@ async def main():
         f"Answer Relevance: {in_relevance_rate:.1f}% | "
         f"Faithfulness: {in_faithfulness_rate:.1f}% | "
         f"Hallucination: {in_hallucination_rate:.1f}% | "
+        f"False Refusal: {in_false_refusal_rate:.1f}% | "
+        f"Correct Refusal: {in_correct_refusal_rate:.1f}% | "
         f"Irrelevance: {in_irrelevance_rate:.1f}% | "
         f"EM: {in_em:.1f}% | F1: {in_f1:.1f}% | "
         f"Recall@k: {in_recall:.1f}% | MRR: {in_mrr:.3f} | "
         f"Context Precision: {in_ctx_precision:.1f}%"
     )
-    print(
-        f"OOD (N={ood_n}) | "
-        f"Refusal Rate: {ood_refusal_rate:.1f}% | "
-        f"Hallucination: {ood_hallucination_rate:.1f}%"
-    )
+    print("OOD RESULTS")
+    print("-" * 32)
+    print(f"Correct Refusal Rate: {ood_refusal_rate:.1f}%")
+    print(f"Hallucination Rate: {ood_hallucination_rate:.1f}%")
+    print(f"Irrelevant Rate: {ood_irrelevant_rate:.1f}%")
     print(f"{'═'*60}")
     print(df[["question", "verdict", "answer"]])
 
