@@ -61,7 +61,12 @@ export const TIMEOUTS = {
   // "Backend unavailable", so the probe that might be waking it gets its own,
   // much longer budget.
   healthCold: 60_000,
-  auth: 30_000,
+  // Every auth call (sign-in, sign-up, OTP, OAuth callback, privacy-policy
+  // acceptance) can just as easily land on a cold container as /health can —
+  // measured cold start on staging is ~59s. 30s aborted these mid-wake, which
+  // is exactly what made the consent modal's "Agree and continue" hang and
+  // then report a timeout right as the backend was about to answer.
+  auth: 75_000,
   query: 120_000,
   ingest: 600_000,
 } as const
