@@ -48,6 +48,7 @@ export const ROUTES = {
   authVerifyOtp: '/auth/verify-otp',
   authResendOtp: '/auth/resend-otp',
   authLogin: '/auth/login',
+  authAcceptPrivacyPolicy: '/auth/accept-privacy-policy',
 } as const
 
 // /health is cheap (server-side cached) but crosses the network; ingest runs one
@@ -65,9 +66,7 @@ export const TIMEOUTS = {
   ingest: 600_000,
 } as const
 
-// Faster cadence on /setup, where the visitor is explicitly waiting for the stack.
 export const POLL_MS = {
-  setup: 5_000,
   other: 20_000,
   // While offline, check back quickly: the backend usually returns within a
   // minute of being woken, and waiting a full 20s to notice adds delay that

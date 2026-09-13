@@ -4,12 +4,12 @@
 
 /* ─────────────────────────────────────────────────────────────
    Two complete identities, switched by data-theme on <html>.
-   Nightglass: dark, blurred glass, soft radii, aurora on.
-   Modernist:  light, hard 2px rules, zero radii, no blur.
+   Dark:  dark background, soft radii, aurora on.
+   Light: light background, hard 2px rules, zero radii, no blur.
    ───────────────────────────────────────────────────────────── */
 
 :root,
-:root[data-theme='nightglass'] {
+:root[data-theme='dark'] {
   --bg: #0a0b0f;
   --ink: #edeef2;
   --accent: #7c83ff;
@@ -23,9 +23,7 @@
   --brd-w: 1px;
   --r-sm: 10px;
   --blur: blur(18px);
-  --grain: 0.05;
   --aurora: 0.3;
-  --spot: 0.5;
   --head-bg: rgba(10, 11, 15, 0.72);
   --head-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
   --shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
@@ -34,7 +32,7 @@
   --warn: #f59e0b;
 }
 
-:root[data-theme='modernist'] {
+:root[data-theme='light'] {
   --bg: #f3f2f2;
   --ink: #201e1d;
   --accent: #ec3013;
@@ -48,9 +46,7 @@
   --brd-w: 2px;
   --r-sm: 0px;
   --blur: none;
-  --grain: 0.035;
   --aurora: 0;
-  --spot: 0.18;
   --head-bg: rgba(243, 242, 242, 0.9);
   --head-shadow: none;
   --shadow: 0 12px 32px rgba(45, 43, 43, 0.22);

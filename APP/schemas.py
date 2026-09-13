@@ -92,6 +92,15 @@ class AuthTokenResponse(BaseModel):
     access_token: str
     user_id: str
     email: str
+    # False until the user has agreed to the current PRIVACY_POLICY_VERSION —
+    # the frontend uses this to gate the mandatory consent modal without a
+    # separate round-trip right after signing in.
+    privacy_policy_accepted: bool = False
+
+
+class PrivacyPolicyAcceptanceResponse(BaseModel):
+    detail: str
+    privacy_policy_version: str
 
 
 # --------------------------------------------------------------------------- #

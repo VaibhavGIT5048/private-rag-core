@@ -78,6 +78,43 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 # in text that looks innocuous when rendered.
 _INVISIBLE_CHARS = re.compile(r"[​-‏‪-‮⁠-⁤﻿]")
 
+# This app answers questions about an uploaded document — it has no crisis
+# counselor behind it. Deliberately narrow (first-person, present-tense
+# distress) to keep false positives on document text like "the report
+# discusses suicide rates" rare; a false negative here is safer than routinely
+# derailing legitimate questions about a document that happens to cover this
+# topic.
+CRISIS_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(?:i(?:'m| am) going to kill myself|i want to kill myself|"
+        r"i(?:'m| am) suicidal|i want to (?:die|end my life)|"
+        r"(?:kill|hurt|cut) myself|thinking about suicide|"
+        r"i have no reason to live|i don'?t want to (?:live|be alive) anymore)\b",
+        re.I,
+    ),
+)
+
+CRISIS_SUPPORT_MESSAGE = (
+    "I'm not able to help with that, and I'd rather not just answer from the "
+    "document here — if you're in crisis or thinking about suicide, please "
+    "reach out to people who can actually help: in the US, call or text 988 "
+    "(Suicide & Crisis Lifeline), available 24/7. Outside the US, "
+    "findahelpline.com lists crisis lines by country. If you're in immediate "
+    "danger, please contact your local emergency number."
+)
+
+
+def detect_crisis_language(text: str) -> bool:
+    """True if `text` reads as first-person self-harm/suicidal distress.
+
+    Checked on the user's raw question, ahead of retrieval and generation —
+    this app has no business generating a grounded-document answer to
+    someone in crisis, however well-cited it would be.
+    """
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in CRISIS_PATTERNS)
+
 
 def detect_injection(text: str) -> list[str]:
     """Returns the names of injection patterns matching `text` (may be empty)."""

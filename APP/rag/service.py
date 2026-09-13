@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,7 @@ import structlog
 import tiktoken
 from langchain_core.documents import Document
 from qdrant_client import QdrantClient
+from qdrant_client import models as qdrant_models
 
 from APP import db
 from APP.rag import cache as doc_cache
@@ -29,8 +31,10 @@ from APP.providers import (
     build_default_embedding_provider,
 )
 from APP.security import (
+    CRISIS_SUPPORT_MESSAGE,
     build_rag_payload,
     build_rewrite_payload,
+    detect_crisis_language,
     detect_injection,
     neutralize_context,
     sanitize_input,
@@ -50,6 +54,7 @@ from APP.schemas import (
 from APP.rag.vector_store import (
     QdrantVectorStore,
     build_hybrid_indices,
+    document_index_dir,
     expand_with_neighbors_scored,
     hybrid_retrieve,
     load_document_index,
@@ -72,12 +77,23 @@ class BackendSettings:
     # whatever already lives in the old "chunks_collection".
     qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "chunks_collection_v2")
     chat_health_ttl: float = float(os.getenv("CHAT_HEALTH_TTL", "60"))
+    # Without a bound, a connection left over from before Qdrant Cloud's
+    # free-tier auto-pause hangs the request indefinitely once the cluster
+    # resumes with a new socket underneath — every request piles up behind it
+    # until the container is manually restarted. A timeout turns that into a
+    # normal failure, which lets the underlying connection pool discard the
+    # dead socket and open a fresh one on the next request instead.
+    qdrant_timeout: float = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "15"))
 
 
 class RAGService:
     def __init__(self, settings: BackendSettings | None = None):
         self.settings = settings or BackendSettings()
-        self.qdrant = QdrantClient(url=self.settings.qdrant_url, api_key=self.settings.qdrant_api_key)
+        self.qdrant = QdrantClient(
+            url=self.settings.qdrant_url,
+            api_key=self.settings.qdrant_api_key,
+            timeout=self.settings.qdrant_timeout,
+        )
         # Default chat = Azure OpenAI Service (gpt-5-mini); default embeddings
         # = self-hosted bge-m3. Both lazy-constructed internally — nothing
         # here downloads model weights or validates a key at startup.
@@ -308,6 +324,21 @@ class RAGService:
         # instructions can't ride along invisibly.
         clean_question = sanitize_input(request.question)
 
+        if detect_crisis_language(clean_question):
+            # No retrieval, no generation: a document-grounded answer is the
+            # wrong response to someone in crisis, however well-cited.
+            logger.warning("crisis_language_detected", document_id=request.document_id)
+            db.create_chat_turn(
+                request.document_id, owner_id, request.question, CRISIS_SUPPORT_MESSAGE, json.dumps([]),
+            )
+            return QueryResponse(
+                request_id=str(uuid4()),
+                answer=CRISIS_SUPPORT_MESSAGE,
+                sources=[],
+                model="safety-response",
+                collection_name=self.settings.qdrant_collection,
+            )
+
         history = [dict(t) for t in db.list_chat_turns(request.document_id, owner_id)]
         question = self._rewrite_query_if_needed(clean_question, history, chat_provider)
         _mark("rewrite_ms")
@@ -390,7 +421,38 @@ class RAGService:
         # deleted document's chunks resident (and in Redis until its TTL) after
         # the user asked for them to be gone.
         doc_cache.invalidate(owner_id, document_id)
-        return db.delete_document(document_id, owner_id)
+        deleted = db.delete_document(document_id, owner_id)
+        if deleted:
+            # SQLite row and BM25/Qdrant artifacts are separate stores; the
+            # ownership check already happened above (delete_document only
+            # returns True for a row matching this owner), so no re-check
+            # is needed before purging the rest of this document's data.
+            self._purge_vectors(document_id, owner_id)
+            shutil.rmtree(document_index_dir(owner_id, document_id), ignore_errors=True)
+        return deleted
+
+    def _purge_vectors(self, document_id: str, owner_id: str) -> None:
+        try:
+            self.qdrant.delete(
+                collection_name=self.settings.qdrant_collection,
+                points_selector=qdrant_models.FilterSelector(
+                    filter=qdrant_models.Filter(
+                        must=[
+                            qdrant_models.FieldCondition(
+                                key="document_id", match=qdrant_models.MatchValue(value=document_id)
+                            ),
+                            qdrant_models.FieldCondition(
+                                key="owner_id", match=qdrant_models.MatchValue(value=owner_id)
+                            ),
+                        ]
+                    )
+                ),
+            )
+        except Exception:
+            # Best-effort: the SQLite row is already gone, which is what
+            # /documents reflects. A transient Qdrant failure here shouldn't
+            # fail the delete request itself; it surfaces in logs instead.
+            logger.exception("qdrant_purge_failed", document_id=document_id, owner_id=owner_id)
 
     def health(self) -> HealthStatus:
         qdrant_status = "down"

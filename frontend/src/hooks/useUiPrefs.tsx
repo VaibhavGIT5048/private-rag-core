@@ -1,8 +1,8 @@
 'use client'
 
-// Theme (Modernist / Nightglass) + motion quality (full / reduced / off),
-// both persisted. Motion is forced to 'off' when the OS asks for reduced
-// motion, so every animation in the app is a progressive enhancement.
+// Theme (Light / Dark) + motion quality (full / reduced / off), both
+// persisted. Motion is forced to 'off' when the OS asks for reduced motion,
+// so every animation in the app is a progressive enhancement.
 
 import {
   createContext,
@@ -16,7 +16,7 @@ import {
 
 import { STORAGE_KEYS } from '@/config'
 
-export type Theme = 'modernist' | 'nightglass'
+export type Theme = 'light' | 'dark'
 export type Motion = 'full' | 'reduced' | 'off'
 
 interface UiPrefsValue {
@@ -35,14 +35,14 @@ interface UiPrefsValue {
 const UiPrefsContext = createContext<UiPrefsValue | null>(null)
 
 export function UiPrefsProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>('nightglass')
+  const [theme, setThemeState] = useState<Theme>('dark')
   const [motion, setMotionState] = useState<Motion>('full')
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
     try {
       const storedTheme = localStorage.getItem(STORAGE_KEYS.theme)
-      if (storedTheme === 'modernist' || storedTheme === 'nightglass') setThemeState(storedTheme)
+      if (storedTheme === 'light' || storedTheme === 'dark') setThemeState(storedTheme)
 
       const storedMotion = localStorage.getItem(STORAGE_KEYS.motion)
       if (storedMotion === 'full' || storedMotion === 'reduced' || storedMotion === 'off') {

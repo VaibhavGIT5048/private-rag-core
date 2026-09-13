@@ -76,11 +76,13 @@ export interface AuthTokenResponse {
   access_token: string
   user_id: string
   email: string
+  privacy_policy_accepted: boolean
 }
 
 export interface User {
   id: string
   email: string
+  privacyPolicyAccepted: boolean
 }
 
 export interface DocumentSummary {

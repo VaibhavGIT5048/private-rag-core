@@ -1,7 +1,7 @@
 'use client'
 
-// Ambient layers: drifting aurora, a particle constellation that reacts to what
-// the app is doing, film grain, and a cursor spotlight.
+// Ambient layers: drifting aurora and a particle constellation that reacts to
+// what the app is doing.
 //
 // Performance discipline (this runs on every route, so it must be cheap):
 //  - only transform/opacity are animated in CSS; the canvas draws to a bitmap
@@ -49,7 +49,6 @@ function profileFor(activity: Activity, dark: boolean): ActivityProfile {
 
 export function Background() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const spotRef = useRef<HTMLDivElement | null>(null)
   const { activity } = useActivity()
   const { theme, motionOff, motionFull } = useUiPrefs()
 
@@ -70,7 +69,6 @@ export function Background() {
     let particles: Particle[] = []
     let dpr = 1
     let raf: number | null = null
-    const pointer = { x: -1, y: -1, dirty: false }
 
     const size = () => {
       dpr = Math.min(window.devicePixelRatio || 1, 2)
@@ -90,15 +88,9 @@ export function Background() {
     const frame = () => {
       raf = requestAnimationFrame(frame)
 
-      if (pointer.dirty && spotRef.current) {
-        spotRef.current.style.setProperty('--mx', `${pointer.x}px`)
-        spotRef.current.style.setProperty('--my', `${pointer.y}px`)
-        pointer.dirty = false
-      }
-
       const w = window.innerWidth
       const h = window.innerHeight
-      const dark = themeRef.current === 'nightglass'
+      const dark = themeRef.current === 'dark'
       const still = motionOffRef.current
       const { speed, alpha, link } = profileFor(activityRef.current, dark)
       const rgb = dark ? '124,131,255' : '236,48,19'
@@ -170,30 +162,20 @@ export function Background() {
       }
     }
 
-    const onPointer = (e: PointerEvent) => {
-      pointer.x = e.clientX
-      pointer.y = e.clientY
-      pointer.dirty = true
-    }
     // Zero CPU in a hidden tab.
     const onVisibility = () => (document.hidden ? stop() : start())
 
     size()
     start()
     window.addEventListener('resize', size)
-    window.addEventListener('pointermove', onPointer, { passive: true })
     document.addEventListener('visibilitychange', onVisibility)
 
     return () => {
       stop()
       window.removeEventListener('resize', size)
-      window.removeEventListener('pointermove', onPointer)
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [motionFull])
-
-  const grainUrl =
-    "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>\")"
 
   return (
     <>
@@ -212,21 +194,6 @@ export function Background() {
         ref={canvasRef}
         className="pointer-events-none fixed inset-0 z-0 h-full w-full"
         aria-hidden
-      />
-      <div
-        className="pointer-events-none fixed inset-0 z-[1]"
-        aria-hidden
-        style={{ opacity: 'var(--grain)', backgroundImage: grainUrl }}
-      />
-      <div
-        ref={spotRef}
-        className="pointer-events-none fixed inset-0 z-[1]"
-        aria-hidden
-        style={{
-          opacity: 'var(--spot)',
-          background:
-            'radial-gradient(340px circle at var(--mx, 50%) var(--my, 30%), color-mix(in srgb, var(--accent) 30%, transparent), transparent 70%)',
-        }}
       />
     </>
   )

@@ -238,6 +238,14 @@ export function signInWithGoogle(code: string, redirectUri: string) {
   })
 }
 
+export function acceptPrivacyPolicy() {
+  return request<{ detail: string; privacy_policy_version: string }>(ROUTES.authAcceptPrivacyPolicy, {
+    method: 'POST',
+    headers: authHeaders(),
+    timeout: TIMEOUTS.auth,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Documents
 // ---------------------------------------------------------------------------

@@ -27,6 +27,10 @@ interface AuthValue {
   hydrated: boolean
   signIn: (payload: AuthTokenResponse) => void
   signOut: () => void
+  /** Marks the current user as having accepted the privacy policy, once the
+   *  backend confirms it — updates local state so the consent modal closes
+   *  without waiting for a fresh sign-in. */
+  markPrivacyPolicyAccepted: () => void
 }
 
 const AuthContext = createContext<AuthValue | null>(null)
@@ -63,7 +67,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signIn = useCallback((payload: AuthTokenResponse) => {
-    const nextUser: User = { id: payload.user_id, email: payload.email }
+    const nextUser: User = {
+      id: payload.user_id,
+      email: payload.email,
+      privacyPolicyAccepted: payload.privacy_policy_accepted,
+    }
     setToken(payload.access_token)
     setUser(nextUser)
     try {
@@ -72,6 +80,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // Private browsing: the session still works, it just won't survive a reload.
     }
+  }, [])
+
+  const markPrivacyPolicyAccepted = useCallback(() => {
+    setUser((current) => {
+      if (!current) return current
+      const next = { ...current, privacyPolicyAccepted: true }
+      try {
+        localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(next))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
   }, [])
 
   const signOut = useCallback(() => {
@@ -86,8 +107,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<AuthValue>(
-    () => ({ user, token, isAuthenticated: Boolean(token), hydrated, signIn, signOut }),
-    [user, token, hydrated, signIn, signOut],
+    () => ({
+      user,
+      token,
+      isAuthenticated: Boolean(token),
+      hydrated,
+      signIn,
+      signOut,
+      markPrivacyPolicyAccepted,
+    }),
+    [user, token, hydrated, signIn, signOut, markPrivacyPolicyAccepted],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

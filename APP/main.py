@@ -35,6 +35,7 @@ from APP.schemas import (
     IngestResponse,
     LoginRequest,
     OAuthCallbackRequest,
+    PrivacyPolicyAcceptanceResponse,
     QueryRequest,
     QueryResponse,
     ResendOtpRequest,
@@ -50,6 +51,24 @@ OTP_RESEND_COOLDOWN_SECONDS = 60
 
 INGEST_RATE_LIMIT = os.getenv("INGEST_RATE_LIMIT", "10/hour")
 QUERY_RATE_LIMIT = os.getenv("QUERY_RATE_LIMIT", "60/hour")
+LOGIN_RATE_LIMIT = os.getenv("LOGIN_RATE_LIMIT", "10/minute")
+
+# Opt-in rather than environment-sniffed: there's no reliable signal in this
+# codebase today for "this is the production deployment" (staging and prod
+# run the same image), so defaulting to disabled would silently turn /docs
+# off everywhere, including local dev, until someone noticed. Set
+# DISABLE_API_DOCS=true on the production Container App to turn it off there.
+DISABLE_API_DOCS = os.getenv("DISABLE_API_DOCS", "false").strip().lower() in ("1", "true", "yes")
+
+# Starlette's UploadFile spools to disk past its threshold, so a huge upload
+# doesn't blow up memory — but it still costs disk, network and embedding
+# time. This is the same bound both /ingest routes read from raw_bytes.
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
+
+# Bump this to re-prompt every signed-in user for consent, even ones who
+# already accepted an older version — db.has_accepted_privacy_policy compares
+# against this exact string, not just "accepted at all".
+PRIVACY_POLICY_VERSION = os.getenv("PRIVACY_POLICY_VERSION", "1.0")
 
 
 def _rate_limit_key(request: Request) -> str:
@@ -113,6 +132,9 @@ def create_app() -> FastAPI:
         title="Local RAG API",
         version="0.1.0",
         lifespan=lifespan,
+        docs_url=None if DISABLE_API_DOCS else "/docs",
+        redoc_url=None if DISABLE_API_DOCS else "/redoc",
+        openapi_url=None if DISABLE_API_DOCS else "/openapi.json",
     )
 
     default_origins = "https://vaibhavgit5048.github.io,http://localhost:3000"
@@ -152,6 +174,9 @@ def create_app() -> FastAPI:
             status_code = getattr(response, "status_code", 500)
             if response is not None:
                 response.headers["X-Request-ID"] = request_id
+                response.headers["X-Content-Type-Options"] = "nosniff"
+                response.headers["X-Frame-Options"] = "DENY"
+                response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
             logger.info(
                 "request_complete",
                 request_id=request_id,
@@ -277,6 +302,11 @@ def create_app() -> FastAPI:
         payload = await file.read()
         if not payload:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        if len(payload) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)}MB upload limit",
+            )
 
         try:
             response = await asyncio.to_thread(
@@ -319,6 +349,11 @@ def create_app() -> FastAPI:
         payload = await file.read()
         if not payload:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        if len(payload) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)}MB upload limit",
+            )
 
         owner_id = current_user["id"]
         filename = file.filename or "upload"
@@ -403,7 +438,11 @@ def create_app() -> FastAPI:
 
         user_id = db.get_or_create_user_for_oauth(result["email"], "github", result["provider_user_id"])
         token = auth.create_access_token(user_id)
-        return AuthTokenResponse(access_token=token, user_id=user_id, email=result["email"])
+        user = db.get_user_by_id(user_id)
+        return AuthTokenResponse(
+            access_token=token, user_id=user_id, email=result["email"],
+            privacy_policy_accepted=db.has_accepted_privacy_policy(user, PRIVACY_POLICY_VERSION),
+        )
 
     @app.post("/auth/google/callback", response_model=AuthTokenResponse)
     async def google_callback(payload: GoogleOAuthCallbackRequest) -> AuthTokenResponse:
@@ -416,7 +455,11 @@ def create_app() -> FastAPI:
 
         user_id = db.get_or_create_user_for_oauth(result["email"], "google", result["provider_user_id"])
         token = auth.create_access_token(user_id)
-        return AuthTokenResponse(access_token=token, user_id=user_id, email=result["email"])
+        user = db.get_user_by_id(user_id)
+        return AuthTokenResponse(
+            access_token=token, user_id=user_id, email=result["email"],
+            privacy_policy_accepted=db.has_accepted_privacy_policy(user, PRIVACY_POLICY_VERSION),
+        )
 
     def _issue_and_send_otp(user_id: str, email_address: str) -> None:
         code = auth.generate_otp_code()
@@ -428,7 +471,10 @@ def create_app() -> FastAPI:
     async def signup(payload: SignupRequest) -> dict:
         existing = db.get_user_by_email(payload.email)
         if existing is not None and existing["email_verified"]:
-            raise HTTPException(status_code=409, detail="An account with this email already exists")
+            # Same response as a genuine signup — do not let this endpoint be
+            # used to enumerate which emails already have a verified account.
+            # No code is sent for one that already exists and is verified.
+            return {"detail": "Verification code sent"}
 
         if existing is None:
             user_id = db.create_user(payload.email, password_hash=auth.hash_password(payload.password))
@@ -451,7 +497,10 @@ def create_app() -> FastAPI:
         db.consume_otp(otp["id"])
         db.set_email_verified(user["id"])
         token = auth.create_access_token(user["id"])
-        return AuthTokenResponse(access_token=token, user_id=user["id"], email=payload.email)
+        return AuthTokenResponse(
+            access_token=token, user_id=user["id"], email=payload.email,
+            privacy_policy_accepted=db.has_accepted_privacy_policy(user, PRIVACY_POLICY_VERSION),
+        )
 
     @app.post("/auth/resend-otp", status_code=202)
     async def resend_otp(payload: ResendOtpRequest) -> dict:
@@ -467,15 +516,33 @@ def create_app() -> FastAPI:
         return {"detail": "If that account needs verification, a new code has been sent"}
 
     @app.post("/auth/login", response_model=AuthTokenResponse)
-    async def login(payload: LoginRequest) -> AuthTokenResponse:
+    @limiter.limit(LOGIN_RATE_LIMIT)
+    async def login(request: Request, payload: LoginRequest) -> AuthTokenResponse:
         user = db.get_user_by_email(payload.email)
+        if user is not None and db.is_locked(user):
+            raise HTTPException(
+                status_code=423, detail="Too many failed attempts. Try again in a few minutes."
+            )
         if user is None or not user["password_hash"] or not auth.verify_password(payload.password, user["password_hash"]):
+            if user is not None:
+                db.record_failed_login(user["id"])
             raise HTTPException(status_code=401, detail="Incorrect email or password")
         if not user["email_verified"]:
             raise HTTPException(status_code=403, detail="Email not verified")
 
+        db.reset_failed_logins(user["id"])
         token = auth.create_access_token(user["id"])
-        return AuthTokenResponse(access_token=token, user_id=user["id"], email=payload.email)
+        return AuthTokenResponse(
+            access_token=token, user_id=user["id"], email=payload.email,
+            privacy_policy_accepted=db.has_accepted_privacy_policy(user, PRIVACY_POLICY_VERSION),
+        )
+
+    @app.post("/auth/accept-privacy-policy", response_model=PrivacyPolicyAcceptanceResponse)
+    async def accept_privacy_policy(current_user=Depends(get_current_user)) -> PrivacyPolicyAcceptanceResponse:
+        db.record_privacy_policy_acceptance(current_user["id"], PRIVACY_POLICY_VERSION)
+        return PrivacyPolicyAcceptanceResponse(
+            detail="Privacy policy acceptance recorded", privacy_policy_version=PRIVACY_POLICY_VERSION
+        )
 
     # ----------------------------------------------------------------- #
     # Documents — list/resume/delete, all scoped to the authenticated user.

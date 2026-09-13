@@ -675,7 +675,7 @@ were byte-identical in the current tree.
 
 THE DESIGN SYSTEM. Colour, border, radius and blur are CSS custom properties
 (--ink, --accent, --brd, --panel, --chip-bg, --r-sm, --brd-w, --blur) rather
-than hardcoded values. Two themes ship — "Modernist" and "Nightglass" — and
+than hardcoded values. Two themes ship — "Light" and "Dark" — and
 because every component reads the tokens rather than literals, switching themes
 is a variable swap with no component changes. This is also what makes the app
 safe to restyle: a change to the palette cannot miss a component.

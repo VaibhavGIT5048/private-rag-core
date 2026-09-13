@@ -20,7 +20,6 @@ import { BrandMark } from '@/components/BrandMark'
 
 const NAV = [
   { href: '/', label: 'Overview' },
-  { href: '/setup', label: 'Setup' },
   { href: '/home', label: 'Home' },
   { href: '/workbench', label: 'Workbench' },
 ]
@@ -41,7 +40,7 @@ export function Header() {
     flash('README.txt downloaded')
   }
 
-  const dark = theme === 'nightglass'
+  const dark = theme === 'dark'
   const themeBtn = (active: boolean): React.CSSProperties => ({
     background: active ? 'var(--accent)' : 'transparent',
     color: active ? 'var(--on-accent)' : 'var(--ink)',
@@ -50,6 +49,13 @@ export function Header() {
 
   return (
     <>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:px-4 focus:py-2 focus:text-[13px] focus:font-extrabold"
+        style={{ background: 'var(--accent)', color: 'var(--on-accent)', borderRadius: 'var(--r-sm)' }}
+      >
+        Skip to content
+      </a>
       <header
         className="sticky top-0 z-40 flex flex-wrap items-center gap-5 px-[26px] py-3"
         style={{
@@ -99,20 +105,20 @@ export function Header() {
           aria-label="Theme"
         >
           <button
-            onClick={() => setTheme('modernist')}
+            onClick={() => setTheme('light')}
             aria-pressed={!dark}
             className="cursor-pointer border-0 px-[10px] py-[6px] text-[11.5px] font-extrabold"
             style={themeBtn(!dark)}
           >
-            Modernist
+            Light
           </button>
           <button
-            onClick={() => setTheme('nightglass')}
+            onClick={() => setTheme('dark')}
             aria-pressed={dark}
             className="cursor-pointer border-0 px-[10px] py-[6px] text-[11.5px] font-extrabold"
             style={themeBtn(dark)}
           >
-            Nightglass
+            Dark
           </button>
         </div>
 

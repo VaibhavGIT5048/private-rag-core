@@ -1,8 +1,8 @@
 import type { Config } from 'tailwindcss'
 
 // Colour/spacing tokens live in globals.css as CSS custom properties so the
-// Modernist / Nightglass theme switch is a single attribute flip at runtime.
-// Tailwind is used for layout; the vars carry the identity.
+// Light / Dark theme switch is a single attribute flip at runtime. Tailwind
+// is used for layout; the vars carry the identity.
 export default {
   content: ['./app/**/*.{ts,tsx}', './src/**/*.{ts,tsx}'],
   theme: {

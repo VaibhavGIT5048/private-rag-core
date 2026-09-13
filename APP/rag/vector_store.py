@@ -22,6 +22,11 @@ EF_SEARCH = 128
 # ingest response report another.
 DEFAULT_COLLECTION = "chunks_collection_v2"
 
+# Same rationale as BackendSettings.qdrant_timeout in rag/service.py: without
+# a bound, a stale connection from before a Qdrant Cloud pause hangs a request
+# forever instead of failing and letting the pool reconnect.
+QDRANT_TIMEOUT_SECONDS = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "15"))
+
 
 def document_index_dir(owner_id: str, document_id: str) -> Path:
     return Path("data/documents") / owner_id / document_id
@@ -289,7 +294,7 @@ def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[
 
     qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
     qdrant_api_key = os.getenv("QDRANT_API_KEY")
-    client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+    client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=QDRANT_TIMEOUT_SECONDS)
     collection_name = os.getenv("QDRANT_COLLECTION", DEFAULT_COLLECTION)
 
     if vectors is None:
@@ -366,7 +371,7 @@ def load_document_index(document_id: str, owner_id: str, embeddings=None) -> tup
     embeddings = embeddings or build_default_embedding_provider()
     qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
     qdrant_api_key = os.getenv("QDRANT_API_KEY")
-    client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+    client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=QDRANT_TIMEOUT_SECONDS)
     collection_name = os.getenv("QDRANT_COLLECTION", DEFAULT_COLLECTION)
     vectorstore = QdrantVectorStore(
         client=client, collection_name=collection_name, embeddings=embeddings,

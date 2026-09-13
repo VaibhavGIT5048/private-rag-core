@@ -1,10 +1,14 @@
 import unittest
 
+from langchain_core.documents import Document
+
+from APP.providers import ContentFilterError
 from APP.rag.service import RAGService
 from APP.security.guardrails import (
     CONTEXT_END,
     CONTEXT_START,
     build_rag_payload,
+    detect_crisis_language,
     detect_injection,
     neutralize_context,
     sanitize_input,
@@ -183,6 +187,71 @@ class OutputValidationTests(unittest.TestCase):
 
     def test_empty_output_is_handled(self):
         self.assertEqual(validate_output(""), "")
+
+
+class ContentFilterFallbackTests(unittest.TestCase):
+    """Azure's content filter must degrade to a cited extractive answer, not
+    an error — a filter trip is an expected, user-facing outcome."""
+
+    class _FilteredProvider:
+        chat_model = "stub"
+
+        def complete_messages(self, messages, **kwargs):
+            raise ContentFilterError("blocked")
+
+    class _NormalProvider:
+        chat_model = "stub"
+
+        def complete_messages(self, messages, **kwargs):
+            return "a normal generated answer"
+
+    def setUp(self):
+        self.service = RAGService.__new__(RAGService)  # no network/model setup
+        self.kept = [
+            (Document(page_content="Revenue rose 12% in Q3.", metadata={"source": "report.pdf", "page": 4}), 0.9),
+        ]
+
+    def test_content_filter_falls_back_to_extractive_answer(self):
+        answer, generated_by_model = self.service._generate_answer(
+            "What was revenue growth?", "context blob", self.kept, self._FilteredProvider(),
+        )
+        self.assertFalse(generated_by_model, "a filtered response must not be marked model-generated")
+        self.assertTrue(answer.startswith("Relevant passages from the document:"))
+        self.assertIn("Revenue rose 12% in Q3.", answer)
+        self.assertIn("[Source: report.pdf | Page: 4]", answer)
+
+    def test_normal_generation_is_returned_untouched(self):
+        answer, generated_by_model = self.service._generate_answer(
+            "What was revenue growth?", "context blob", self.kept, self._NormalProvider(),
+        )
+        self.assertTrue(generated_by_model)
+        self.assertEqual(answer, "a normal generated answer")
+
+
+class CrisisLanguageTests(unittest.TestCase):
+    """This app answers questions about a document — it must not attempt a
+    grounded-document answer for someone expressing self-harm intent."""
+
+    def test_first_person_distress_is_detected(self):
+        for probe in (
+            "I want to kill myself",
+            "I am suicidal and don't know what to do",
+            "thinking about suicide every day",
+            "I don't want to be alive anymore",
+        ):
+            self.assertTrue(detect_crisis_language(probe), probe)
+
+    def test_document_discussion_of_the_topic_is_not_flagged(self):
+        # A question ABOUT the topic (third-person, analytical) must not be
+        # blocked — only first-person distress should short-circuit retrieval.
+        for probe in (
+            "What does the report say about the national suicide rate?",
+            "Summarise the chapter on self-harm prevention programs.",
+        ):
+            self.assertFalse(detect_crisis_language(probe), probe)
+
+    def test_empty_input_is_not_flagged(self):
+        self.assertFalse(detect_crisis_language(""))
 
 
 if __name__ == "__main__":

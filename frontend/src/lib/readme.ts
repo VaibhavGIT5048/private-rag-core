@@ -1,6 +1,6 @@
 // Builds the downloadable README.txt entirely in the browser — no network
 // request. Commands here are the real ones from the project's docker-compose
-// setup; keep them in sync with the repo's own README.
+// stack; keep them in sync with the repo's own README.
 
 import { API_BASE_URL, REPO_URL } from '@/config'
 
@@ -84,28 +84,4 @@ export function downloadReadme() {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 4000)
-}
-
-function downloadText(filename: string, content: string) {
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 4000)
-}
-
-export function downloadEnvExample() {
-  downloadText('env-example.txt', `# Hosted frontend/backend configuration\nNEXT_PUBLIC_API_BASE_URL=${API_BASE_URL}\nNEXT_PUBLIC_SITE_URL=${window.location.origin}\nNEXT_PUBLIC_GITHUB_CLIENT_ID=\nNEXT_PUBLIC_GOOGLE_CLIENT_ID=\n`)
-}
-
-export function downloadParserSetup() {
-  downloadText('parser-setup.txt', `PARSER SETUP\n\nCSV, TXT and Markdown use local parsing. PDF, Office and image files use the configured parser router.\n\nOptional vendor services:\n- MISTRAL_API_KEY for Mistral OCR\n- AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT and AZURE_DOCUMENT_INTELLIGENCE_KEY for OCR/layout fallback\n\nThe frontend never receives these keys. Configure them on the API service.\n`)
-}
-
-export function downloadDevWorkflow() {
-  downloadText('dev-workflow.txt', `DEVELOPMENT WORKFLOW\n\n1. Run the API and frontend locally with Docker Compose or point NEXT_PUBLIC_API_BASE_URL at staging.\n2. Sign in before testing ingest, documents, history, or query.\n3. Test two documents under one account and resume each from /home.\n4. Run backend tests and: npm run typecheck && npm run build\n5. Verify staging before promoting production.\n`)
 }

@@ -1,7 +1,7 @@
 'use client'
 
 // The live workbench. Ingest, query, source inspection and collection
-// management stay in one route so the user can move from setup to answers
+// management stay in one route so the user can move from upload to answers
 // without losing context.
 
 import { useCallback, useEffect, useState, useRef } from 'react'
@@ -590,10 +590,10 @@ export function WorkbenchView() {
               </div>
               {!waking && (
                 <div className="mt-4 flex flex-wrap gap-3">
-                  <Link href="/setup">
-                    <Button variant="ghost">Back to setup</Button>
+                  <Link href="/home">
+                    <Button variant="ghost">Back to home</Button>
                   </Link>
-                  <Button variant="chip" onClick={() => flash('Check the setup page for the next step')}>
+                  <Button variant="chip" onClick={() => flash('This reconnects automatically once the backend responds')}>
                     What now?
                   </Button>
                 </div>
