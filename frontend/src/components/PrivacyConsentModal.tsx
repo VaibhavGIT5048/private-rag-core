@@ -77,7 +77,7 @@ export function PrivacyConsentModal() {
         aria-labelledby="privacy-consent-title"
         // No onClick-outside / Escape dismissal on purpose — this gate is
         // mandatory, not a convenience dialog the user can click past.
-        className="anim-rise grid w-full max-w-[560px] gap-0 overflow-hidden"
+        className="anim-rise grid w-full max-w-[560px] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden"
         style={{
           background: 'var(--panel-solid)',
           border: 'var(--brd-w) solid var(--brd)',
