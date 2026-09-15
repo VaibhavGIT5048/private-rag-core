@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/useToast'
@@ -21,6 +21,7 @@ const BOTTOM_THRESHOLD_PX = 24
 
 export function PrivacyConsentModal() {
   const router = useRouter()
+  const pathname = usePathname()
   const { user, isAuthenticated, hydrated, markPrivacyPolicyAccepted, signOut } = useAuth()
   const { flash } = useToast()
 
@@ -64,7 +65,12 @@ export function PrivacyConsentModal() {
     router.replace('/signin')
   }, [router, signOut])
 
-  if (!hydrated || !isAuthenticated || !user || user.privacyPolicyAccepted) return null
+  // Never gate the policy page itself — that's exactly where "View more"
+  // sends someone who hasn't accepted yet, and stacking the same gate on
+  // top of the full page it links to would just show the same text twice.
+  if (!hydrated || !isAuthenticated || !user || user.privacyPolicyAccepted || pathname?.startsWith('/privacy')) {
+    return null
+  }
 
   return (
     <div
