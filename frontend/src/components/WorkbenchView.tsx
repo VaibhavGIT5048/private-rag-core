@@ -745,7 +745,12 @@ export function WorkbenchView() {
         </div>
 
         {hasRail && (
-          <div className="grid min-w-0 content-start gap-4">
+          // Between lg and xl there are only 2 explicit columns (see the
+          // comment above), so without an explicit span this wraps into
+          // column 1 alone and leaves a dead gap beside it in column 2 —
+          // col-span-2 makes it take the full row there instead; xl:col-span-1
+          // hands it back its own dedicated third column once one exists.
+          <div className="grid min-w-0 content-start gap-4 lg:col-span-2 xl:col-span-1">
             <Panel>
               <PanelHeader
                 title="History"
