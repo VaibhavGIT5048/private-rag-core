@@ -6,6 +6,8 @@ import tiktoken
 from dotenv import load_dotenv
 from langchain_core.documents import Document
 
+from APP.rag.chunking import save_chunks_jsonl
+
 # ─────────────────────────────────────────────────────────────────────
 # CONFIGURATION & INITIALIZATION
 # ─────────────────────────────────────────────────────────────────────
@@ -208,16 +210,6 @@ def apply_quality_gate(chunks: list[Document], threshold_score: float = 4.0, vec
     # only applies a 0.7 ranking multiplier in apply_quality_penalty().
     print(f"Rank-penalised (0.7x)  : {len(chunks) - passed_count} chunks")
     return processed_chunks
-
-
-def save_chunks_jsonl(chunks: list[Document], output_path: str) -> None:
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        for chunk in chunks:
-            f.write(json.dumps({
-                "page_content": chunk.page_content,
-                "metadata": chunk.metadata
-            }, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":
