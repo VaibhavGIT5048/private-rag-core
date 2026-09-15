@@ -87,14 +87,6 @@ a:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* Clamp long chunk text until expanded. */
-.clamp-3 {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
 /* ── Keyframes ───────────────────────────────────────────────── */
 @keyframes dash {
   to {
@@ -124,24 +116,6 @@ a:hover {
   50% {
     opacity: 0.35;
     transform: scale(0.72);
-  }
-}
-@keyframes ringout {
-  0% {
-    transform: scale(0.6);
-    opacity: 0.9;
-  }
-  100% {
-    transform: scale(2.6);
-    opacity: 0;
-  }
-}
-@keyframes shimmer {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(100%);
   }
 }
 @keyframes drift {
@@ -216,12 +190,6 @@ a:hover {
 
 .anim-rise {
   animation: rise 0.3s ease both;
-}
-.anim-spin {
-  animation: spin 0.9s linear infinite;
-}
-.anim-caret {
-  animation: caret 1s step-end infinite;
 }
 
 /* Answers arrive as Markdown. Before this, the raw string was dumped into a

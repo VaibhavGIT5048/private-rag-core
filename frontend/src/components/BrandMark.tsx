@@ -1,10 +1,10 @@
 // Grounded RAG mark: an ungrounded answer settles onto a source line and
 // receives its citation. Kept as SVG so it remains crisp in the header and at
 // favicon-sized scales without shipping a raster asset.
-export function BrandMark({ size = 28, inverse = false }: { size?: number; inverse?: boolean }) {
-  const line = inverse ? 'var(--on-accent)' : 'var(--ink)'
-  const node = inverse ? 'var(--accent)' : 'var(--accent)'
-  const float = inverse ? 'var(--on-accent)' : 'var(--brd)'
+export function BrandMark({ size = 28 }: { size?: number }) {
+  const line = 'var(--ink)'
+  const node = 'var(--accent)'
+  const float = 'var(--brd)'
 
   return (
     <svg
@@ -30,7 +30,7 @@ export function BrandMark({ size = 28, inverse = false }: { size?: number; inver
       <circle cx="60" cy="43" r="13" fill={float} className="brand-mark__answer" />
       <g className="brand-mark__citation">
         <rect x="74" y="85" width="22" height="16" fill={node} />
-        <text x="85" y="97" fill={inverse ? 'var(--ink)' : 'var(--on-accent)'} fontSize="10" fontWeight="800" fontFamily="ui-sans-serif, system-ui, sans-serif" textAnchor="middle">1</text>
+        <text x="85" y="97" fill="var(--on-accent)" fontSize="10" fontWeight="800" fontFamily="ui-sans-serif, system-ui, sans-serif" textAnchor="middle">1</text>
       </g>
     </svg>
   )
