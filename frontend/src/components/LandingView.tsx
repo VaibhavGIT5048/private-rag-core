@@ -4,7 +4,7 @@
 // is what most visitors will see and judge the project by.
 
 import Link from 'next/link'
-import { ArrowRight, Github } from 'lucide-react'
+import { ArrowRight, ChevronDown, Github } from 'lucide-react'
 
 import { REPO_URL } from '@/config'
 import { useUiPrefs } from '@/hooks/useUiPrefs'
@@ -273,11 +273,20 @@ export function LandingView() {
         <h2 className="m-0 mb-7 text-[38px] font-extrabold tracking-[-0.03em]">Frequently asked</h2>
         <div className="grid max-w-[760px] gap-[2px]" style={{ background: 'var(--brd)' }}>
           {FAQS.map((item) => (
-            <details key={item.q} className="group p-5" style={{ background: 'var(--panel)', backdropFilter: 'var(--blur)' }}>
-              <summary className="cursor-pointer list-none text-[16px] font-extrabold tracking-[-0.01em] marker:content-none">
+            <details
+              key={item.q}
+              className="group p-5 transition-colors"
+              style={{ background: 'var(--panel)', backdropFilter: 'var(--blur)' }}
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-[16px] font-extrabold tracking-[-0.01em] marker:content-none">
                 {item.q}
+                <ChevronDown
+                  size={18}
+                  aria-hidden
+                  className="shrink-0 opacity-55 transition-transform duration-200 group-open:rotate-180"
+                />
               </summary>
-              <p className="m-0 mt-3 text-[14px] leading-[1.6] opacity-70">{item.a}</p>
+              <p className="m-0 mt-3 max-w-[64ch] text-[14px] leading-[1.6] opacity-70">{item.a}</p>
             </details>
           ))}
         </div>

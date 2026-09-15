@@ -95,7 +95,6 @@ export const ACCEPTED_EXTENSIONS = [
 
 export const STORAGE_KEYS = {
   theme: 'rag.theme',
-  motion: 'rag.motion',
   pipelineOpen: 'rag.pipelineOpen',
   hasConnected: 'rag.hasConnected',
   byoOpenAiKey: 'rag.byoOpenAiKey',

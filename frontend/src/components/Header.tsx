@@ -1,19 +1,17 @@
 'use client'
 
-// Sticky chrome shown on every route: brand, nav, connectivity badge, theme and
-// motion controls, repo link, instructions download. Also hosts the two global
-// banners (backend-connected on landing, reconnecting on workbench).
+// Sticky chrome shown on every route: brand, nav, connectivity badge, theme
+// toggle, repo link. Also hosts the two global banners (backend-connected on
+// landing, reconnecting on workbench).
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Download, Github } from 'lucide-react'
+import { Github } from 'lucide-react'
 
-import { API_BASE_URL, REPO_URL, SITE_URL } from '@/config'
+import { API_BASE_URL, REPO_URL } from '@/config'
 import { useHealth } from '@/hooks/useHealth'
 import { useAuth } from '@/hooks/useAuth'
-import { useToast } from '@/hooks/useToast'
-import { useUiPrefs, type Motion } from '@/hooks/useUiPrefs'
-import { downloadReadme } from '@/lib/readme'
+import { useUiPrefs } from '@/hooks/useUiPrefs'
 import { Button, Spinner } from '@/components/ui'
 import { StatusBadge } from '@/components/StatusBadge'
 import { BrandMark } from '@/components/BrandMark'
@@ -27,18 +25,12 @@ const NAV = [
 export function Header() {
   const router = useRouter()
   const pathname = usePathname() ?? '/'
-  const { theme, setTheme, motion, setMotion } = useUiPrefs()
+  const { theme, setTheme } = useUiPrefs()
   const { isConnected, reconnecting } = useHealth()
-  const { flash } = useToast()
   const { user, hydrated, isAuthenticated, signOut } = useAuth()
 
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href)
-
-  const onDownload = () => {
-    downloadReadme()
-    flash('README.txt downloaded')
-  }
 
   const dark = theme === 'dark'
   const themeBtn = (active: boolean): React.CSSProperties => ({
@@ -122,35 +114,6 @@ export function Header() {
           </button>
         </div>
 
-        <div className="flex items-center gap-[7px]">
-          <label
-            htmlFor="motion"
-            className="text-[11px] font-extrabold uppercase tracking-[0.1em] opacity-50"
-          >
-            Motion
-          </label>
-          <select
-            id="motion"
-            value={motion}
-            onChange={(e) => setMotion(e.target.value as Motion)}
-            className="px-[7px] py-[5px] text-[12px] font-extrabold"
-            style={{
-              color: 'var(--ink)',
-              background: 'var(--chip-bg)',
-              border: 'var(--brd-w) solid var(--brd)',
-              borderRadius: 'var(--r-sm)',
-            }}
-          >
-            <option value="full">Full</option>
-            <option value="reduced">Reduced</option>
-            <option value="off">Off</option>
-          </select>
-        </div>
-
-        <Button variant="ghost" onClick={onDownload}>
-          <Download size={13} aria-hidden /> Instructions
-        </Button>
-
         {hydrated && (isAuthenticated ? (
           <div className="flex items-center gap-2">
             <span className="hidden max-w-[180px] truncate text-[11.5px] opacity-60 sm:inline">{user?.email}</span>
@@ -159,15 +122,6 @@ export function Header() {
         ) : (
           <Link href="/signin"><Button variant="solid">Sign in</Button></Link>
         ))}
-
-        <a
-          href={SITE_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-[6px] text-[12px] font-extrabold"
-        >
-          Live site
-        </a>
 
         <a
           href={REPO_URL}
