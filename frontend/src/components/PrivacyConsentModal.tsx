@@ -6,6 +6,7 @@
 // so it survives across devices and sessions, not just this browser.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 
 import { useAuth } from '@/hooks/useAuth'
@@ -119,7 +120,7 @@ export function PrivacyConsentModal() {
         </div>
 
         <div className="grid gap-4 p-6 pt-4">
-          <a
+          <Link
             href="/privacy"
             target="_blank"
             rel="noreferrer"
@@ -127,7 +128,7 @@ export function PrivacyConsentModal() {
             style={{ color: 'var(--accent-hi)' }}
           >
             View more — full Privacy Policy &amp; Terms
-          </a>
+          </Link>
 
           <label className="flex items-start gap-3 text-[13.5px] leading-[1.5]" style={{ opacity: scrolledToBottom ? 1 : 0.45 }}>
             <input
