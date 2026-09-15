@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Stage 1: Builder
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /app
 
@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # requirements-api.txt edit would re-download ~2.3GB. Keyed to fetch_models.py
 # alone, this layer survives dependency bumps and code changes alike, and only
 # a deliberate edit to the pins rebuilds it.
-FROM python:3.11-slim AS models
+FROM python:3.14-slim AS models
 
 # hf_transfer is a faster download backend; flashrank is needed to prefetch the
 # ranker through its own logic rather than guessing its URL. Neither pulls torch.
@@ -50,7 +50,7 @@ COPY docker/fetch_models.py /fetch_models.py
 RUN python /fetch_models.py
 
 # Stage 3: Runtime
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
