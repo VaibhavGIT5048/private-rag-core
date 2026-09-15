@@ -241,7 +241,7 @@ def _ensure_payload_indexes(client, collection_name: str) -> None:
             pass
 
 
-def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[list[float]] | None = None, embeddings=None):
+def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[list[float]] | None = None, embeddings=None, client=None):
     """Indexes one document's chunks into the shared Qdrant collection
     (create-if-missing + upsert — never destructive, unlike the old
     per-ingest recreate_collection) and writes that document's own BM25
@@ -251,6 +251,13 @@ def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[
     is the embedding-pass consolidation: the caller computes chunk
     embeddings once, in parallel, and feeds the same vectors into both the
     quality-gate overlap check and this indexing step.
+
+    `client`, if given, is reused as-is instead of constructing a new one —
+    RAGService passes its own pooled, timeout-configured client so every
+    ingest shares the same connection pool the rest of the service uses,
+    rather than opening and discarding a fresh one per call. Falls back to
+    building one (e.g. for the CLI/eval-harness callers that have no
+    RAGService instance to borrow from) when not given.
     """
     if not chunks:
         print("⚠️ No chunks to index. Skipping build.")
@@ -267,9 +274,10 @@ def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[
         print("⚠️ qdrant-client not installed.")
         return None, None
 
-    qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-    qdrant_api_key = os.getenv("QDRANT_API_KEY")
-    client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=QDRANT_TIMEOUT_SECONDS)
+    if client is None:
+        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+        qdrant_api_key = os.getenv("QDRANT_API_KEY")
+        client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=QDRANT_TIMEOUT_SECONDS)
     collection_name = os.getenv("QDRANT_COLLECTION", DEFAULT_COLLECTION)
 
     if vectors is None:
@@ -326,9 +334,12 @@ def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[
     return vectorstore, bm25
 
 
-def load_document_index(document_id: str, owner_id: str, embeddings=None) -> tuple[QdrantVectorStore | None, object | None, list[Document] | None]:
+def load_document_index(document_id: str, owner_id: str, embeddings=None, client=None) -> tuple[QdrantVectorStore | None, object | None, list[Document] | None]:
     """Loads the pieces needed for /query on one document: a document-scoped
     QdrantVectorStore plus that document's own BM25 index and chunks.
+
+    `client`, if given, is reused as-is — see build_hybrid_indices's
+    docstring for why (same pooled-client rationale, same CLI/eval fallback).
     """
     doc_dir = document_index_dir(owner_id, document_id)
     bm25_path = doc_dir / "bm25.pkl"
@@ -344,9 +355,10 @@ def load_document_index(document_id: str, owner_id: str, embeddings=None) -> tup
         return None, bm25, chunks
 
     embeddings = embeddings or build_default_embedding_provider()
-    qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-    qdrant_api_key = os.getenv("QDRANT_API_KEY")
-    client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=QDRANT_TIMEOUT_SECONDS)
+    if client is None:
+        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+        qdrant_api_key = os.getenv("QDRANT_API_KEY")
+        client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=QDRANT_TIMEOUT_SECONDS)
     collection_name = os.getenv("QDRANT_COLLECTION", DEFAULT_COLLECTION)
     vectorstore = QdrantVectorStore(
         client=client, collection_name=collection_name, embeddings=embeddings,

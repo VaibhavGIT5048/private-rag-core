@@ -189,7 +189,7 @@ class RAGService:
         document_id = db.create_document(owner_id, filename, pages=len(docs))
         build_hybrid_indices(
             retrieval_chunks, document_id=document_id, owner_id=owner_id,
-            vectors=retrieval_vectors, embeddings=self.embedding_provider,
+            vectors=retrieval_vectors, embeddings=self.embedding_provider, client=self.qdrant,
         )
         _mark("index_ms")
         # Each ingest mints a fresh document_id, so nothing stale can be keyed
@@ -249,7 +249,9 @@ class RAGService:
             )
             return vectorstore, bm25, chunks
 
-        vectorstore, bm25, chunks = load_document_index(document_id, owner_id, embeddings=self.embedding_provider)
+        vectorstore, bm25, chunks = load_document_index(
+            document_id, owner_id, embeddings=self.embedding_provider, client=self.qdrant,
+        )
         if vectorstore is None or bm25 is None or chunks is None:
             raise FileNotFoundError(f"No index found for document {document_id}. Run /ingest first.")
         doc_cache.put(owner_id, document_id, (bm25, chunks))
