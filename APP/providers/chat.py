@@ -88,6 +88,26 @@ class ChatProvider:
         return ""
 
     def complete(self, prompt: str, *, max_tokens: int = 512, temperature: float = 0) -> str:
+        return self.complete_messages(
+            [{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+    def complete_messages(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int = 512,
+        temperature: float = 0,
+    ) -> str:
+        """Complete an explicitly structured chat turn.
+
+        Keeping system guidance in a system message is important for both
+        instruction hierarchy and Azure's safety classifier: a long policy
+        document pasted into a user message can look like the very attack it
+        is trying to defend against.
+        """
         # max_completion_tokens, not max_tokens — gpt-5-mini rejects
         # max_tokens outright with a 400, and OpenAI's own API has deprecated
         # max_tokens in favor of this name across the board, so it's the
@@ -96,7 +116,7 @@ class ChatProvider:
             "model": self.chat_model,
             "temperature": temperature,
             "max_completion_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
         }
         if self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort

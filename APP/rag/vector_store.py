@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import json
 import pickle
 import re
 import time
@@ -21,6 +20,11 @@ EF_SEARCH = 128
 # if these two drift, ingest writes to one collection while /health and the
 # ingest response report another.
 DEFAULT_COLLECTION = "chunks_collection_v2"
+
+# Same rationale as BackendSettings.qdrant_timeout in rag/service.py: without
+# a bound, a stale connection from before a Qdrant Cloud pause hangs a request
+# forever instead of failing and letting the pool reconnect.
+QDRANT_TIMEOUT_SECONDS = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "15"))
 
 
 def document_index_dir(owner_id: str, document_id: str) -> Path:
@@ -197,30 +201,6 @@ def tokenize_for_bm25(text: str) -> list[str]:
     return TOKEN_PATTERN.findall(text.lower())
 
 
-def load_passed_chunks(path="data/chunks/chunks_processed.jsonl"):
-    potential_paths = [Path(path), Path("../") / path]
-    target_path = None
-    for p in potential_paths:
-        if p.exists():
-            target_path = p
-            break
-
-    if not target_path:
-        print(f"❌ Error: Could not find {path}")
-        return []
-
-    processed_chunks = []
-    print(f"🔄 Loading data from: {target_path}")
-    with open(target_path, "r", encoding="utf-8") as f:
-        for line in f:
-            data = json.loads(line)
-            processed_chunks.append(Document(
-                page_content=data["page_content"],
-                metadata=data["metadata"]
-            ))
-    return processed_chunks
-
-
 def _collection_exists(client, collection_name: str) -> bool:
     try:
         return client.collection_exists(collection_name)
@@ -261,7 +241,7 @@ def _ensure_payload_indexes(client, collection_name: str) -> None:
             pass
 
 
-def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[list[float]] | None = None, embeddings=None):
+def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[list[float]] | None = None, embeddings=None, client=None):
     """Indexes one document's chunks into the shared Qdrant collection
     (create-if-missing + upsert — never destructive, unlike the old
     per-ingest recreate_collection) and writes that document's own BM25
@@ -271,6 +251,13 @@ def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[
     is the embedding-pass consolidation: the caller computes chunk
     embeddings once, in parallel, and feeds the same vectors into both the
     quality-gate overlap check and this indexing step.
+
+    `client`, if given, is reused as-is instead of constructing a new one —
+    RAGService passes its own pooled, timeout-configured client so every
+    ingest shares the same connection pool the rest of the service uses,
+    rather than opening and discarding a fresh one per call. Falls back to
+    building one (e.g. for the CLI/eval-harness callers that have no
+    RAGService instance to borrow from) when not given.
     """
     if not chunks:
         print("⚠️ No chunks to index. Skipping build.")
@@ -287,9 +274,10 @@ def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[
         print("⚠️ qdrant-client not installed.")
         return None, None
 
-    qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-    qdrant_api_key = os.getenv("QDRANT_API_KEY")
-    client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+    if client is None:
+        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+        qdrant_api_key = os.getenv("QDRANT_API_KEY")
+        client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=QDRANT_TIMEOUT_SECONDS)
     collection_name = os.getenv("QDRANT_COLLECTION", DEFAULT_COLLECTION)
 
     if vectors is None:
@@ -346,9 +334,12 @@ def build_hybrid_indices(chunks, document_id: str, owner_id: str, vectors: list[
     return vectorstore, bm25
 
 
-def load_document_index(document_id: str, owner_id: str, embeddings=None) -> tuple[QdrantVectorStore | None, object | None, list[Document] | None]:
+def load_document_index(document_id: str, owner_id: str, embeddings=None, client=None) -> tuple[QdrantVectorStore | None, object | None, list[Document] | None]:
     """Loads the pieces needed for /query on one document: a document-scoped
     QdrantVectorStore plus that document's own BM25 index and chunks.
+
+    `client`, if given, is reused as-is — see build_hybrid_indices's
+    docstring for why (same pooled-client rationale, same CLI/eval fallback).
     """
     doc_dir = document_index_dir(owner_id, document_id)
     bm25_path = doc_dir / "bm25.pkl"
@@ -364,9 +355,10 @@ def load_document_index(document_id: str, owner_id: str, embeddings=None) -> tup
         return None, bm25, chunks
 
     embeddings = embeddings or build_default_embedding_provider()
-    qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-    qdrant_api_key = os.getenv("QDRANT_API_KEY")
-    client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+    if client is None:
+        qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+        qdrant_api_key = os.getenv("QDRANT_API_KEY")
+        client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=QDRANT_TIMEOUT_SECONDS)
     collection_name = os.getenv("QDRANT_COLLECTION", DEFAULT_COLLECTION)
     vectorstore = QdrantVectorStore(
         client=client, collection_name=collection_name, embeddings=embeddings,
@@ -503,22 +495,3 @@ def expand_with_neighbors_scored(
                 seen.add(neighbor_id)
 
     return expanded
-
-
-if __name__ == "__main__":
-    print("\n" + "=" * 50)
-    print("🚀 STARTING: VECTOR STORE & HYBRID SEARCH")
-    print("=" * 50)
-
-    all_passed = [c for c in load_passed_chunks() if c.page_content.strip()]
-    print(f"📥 Found {len(all_passed)} chunks to index.")
-
-    if all_passed:
-        vs, bm = build_hybrid_indices(all_passed, document_id=str(uuid.uuid4()), owner_id="debug-cli")
-        test_query = input("\nEnter a test query: ")
-        results = hybrid_retrieve(test_query, vs, bm, all_passed)
-        for i, (doc, score) in enumerate(results, 1):
-            print(f"\n[{i}] RRF Score: {score:.4f} | Page: {doc.metadata.get('page')}")
-            print(f"Content: {doc.page_content[:150]}...")
-    else:
-        print("❌ Build stopped: No data loaded.")

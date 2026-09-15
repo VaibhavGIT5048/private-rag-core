@@ -37,8 +37,6 @@ export const ROUTES = {
   ingestAsync: '/ingest/async',
   ingestJob: (id: string) => `/ingest/jobs/${encodeURIComponent(id)}`,
   query: '/query',
-  collections: '/collections',
-  collection: (name: string) => `/collections/${encodeURIComponent(name)}`,
   documents: '/documents',
   document: (id: string) => `/documents/${encodeURIComponent(id)}`,
   documentHistory: (id: string) => `/documents/${encodeURIComponent(id)}/history`,
@@ -48,6 +46,7 @@ export const ROUTES = {
   authVerifyOtp: '/auth/verify-otp',
   authResendOtp: '/auth/resend-otp',
   authLogin: '/auth/login',
+  authAcceptPrivacyPolicy: '/auth/accept-privacy-policy',
 } as const
 
 // /health is cheap (server-side cached) but crosses the network; ingest runs one
@@ -60,14 +59,17 @@ export const TIMEOUTS = {
   // "Backend unavailable", so the probe that might be waking it gets its own,
   // much longer budget.
   healthCold: 60_000,
-  auth: 30_000,
+  // Every auth call (sign-in, sign-up, OTP, OAuth callback, privacy-policy
+  // acceptance) can just as easily land on a cold container as /health can —
+  // measured cold start on staging is ~59s. 30s aborted these mid-wake, which
+  // is exactly what made the consent modal's "Agree and continue" hang and
+  // then report a timeout right as the backend was about to answer.
+  auth: 75_000,
   query: 120_000,
   ingest: 600_000,
 } as const
 
-// Faster cadence on /setup, where the visitor is explicitly waiting for the stack.
 export const POLL_MS = {
-  setup: 5_000,
   other: 20_000,
   // While offline, check back quickly: the backend usually returns within a
   // minute of being woken, and waiting a full 20s to notice adds delay that
@@ -91,7 +93,6 @@ export const ACCEPTED_EXTENSIONS = [
 
 export const STORAGE_KEYS = {
   theme: 'rag.theme',
-  motion: 'rag.motion',
   pipelineOpen: 'rag.pipelineOpen',
   hasConnected: 'rag.hasConnected',
   byoOpenAiKey: 'rag.byoOpenAiKey',

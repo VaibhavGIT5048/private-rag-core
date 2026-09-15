@@ -11,7 +11,10 @@ import { ToastProvider } from '@/hooks/useToast'
 import { UiPrefsProvider } from '@/hooks/useUiPrefs'
 import { ActivityHealthBridge } from '@/components/ActivityHealthBridge'
 import { Background } from '@/components/Background'
+import { ContactButton } from '@/components/ContactButton'
 import { Header } from '@/components/Header'
+import { PrivacyConsentModal } from '@/components/PrivacyConsentModal'
+import { ScrollProgressBar } from '@/components/ScrollProgressBar'
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
@@ -22,10 +25,13 @@ export function Providers({ children }: { children: ReactNode }) {
             <ActivityProvider>
               <ActivityHealthBridge />
               <Background />
+              <ScrollProgressBar />
               <div className="relative isolate min-h-screen">
                 <Header />
-                {children}
+                <div id="main-content">{children}</div>
               </div>
+              <ContactButton />
+              <PrivacyConsentModal />
             </ActivityProvider>
           </HealthProvider>
         </ToastProvider>

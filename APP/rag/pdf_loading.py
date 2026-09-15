@@ -6,9 +6,9 @@ from typing import List
 from uuid import uuid4
 
 # pypdf is the declared extractor; pdfplumber is deliberately NOT a dependency.
-# This loader is the interim local-fallback tier only — Phase 3's parser router
-# (LiteParse / Document Intelligence / Mistral OCR) becomes the real extraction
-# layer, so adding a second PDF library here would be replaced work. Keep the
+# This loader is the permanent local-PDF tier that the parser router (APP/parsers/,
+# LiteParse / Document Intelligence / Mistral OCR) wraps rather than replaces —
+# so adding a second PDF library here would be replaced work. Keep the
 # optional import so an environment that happens to have pdfplumber still
 # works, but nothing installs it on purpose and pypdf is the tested path.
 try:
@@ -87,18 +87,6 @@ def load_pdf(pdf_path: str | Path) -> List[PageContent]:
         f"{blank_pages} blank skipped, {total_chars:,} total chars."
     )
     return documents
-
-
-def load_pdfs(pdf_paths: list[str | Path]) -> List[PageContent]:
-    all_docs: List[PageContent] = []
-    for pdf_path in pdf_paths:
-        docs = load_pdf(pdf_path)
-        all_docs.extend(docs)
-
-    logger.info(
-        f"Processed {len(pdf_paths)} PDFs -> {len(all_docs)} total extracted pages."
-    )
-    return all_docs
 
 
 def preview_pages(documents: List[PageContent], n: int = 2, preview_chars: int = 400) -> None:

@@ -1,7 +1,7 @@
 'use client'
 
 // The live workbench. Ingest, query, source inspection and collection
-// management stay in one route so the user can move from setup to answers
+// management stay in one route so the user can move from upload to answers
 // without losing context.
 
 import { useCallback, useEffect, useState, useRef } from 'react'
@@ -16,6 +16,7 @@ import { useRequireAuth } from '@/hooks/useAuth'
 import { useHealth } from '@/hooks/useHealth'
 import { useToast } from '@/hooks/useToast'
 import { useUiPrefs } from '@/hooks/useUiPrefs'
+import { formatApiError } from '@/lib/apiError'
 import {
   CITE_SCHEME,
   formatScore,
@@ -28,7 +29,6 @@ import {
 import { MAX_PIPE_STAGE, QUERY_STAGES } from '@/lib/pipeline'
 import { ApiError, getChatHistory, query } from '@/services/api'
 import type { ChatTurnSummary, IngestResponse, SourceChunk } from '@/types/api'
-import { CollectionsPanel } from '@/components/CollectionsPanel'
 import { IngestPanel } from '@/components/IngestPanel'
 import { PipelineVisualiser } from '@/components/PipelineVisualiser'
 import { Button, Eyebrow, Mono, Panel, PanelHeader, Spinner } from '@/components/ui'
@@ -95,7 +95,6 @@ export function WorkbenchView() {
   // without needing to be written here too.
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null)
   const [focus, setFocus] = useState<CitationFocus | null>(null)
-  const [refreshToken, setRefreshToken] = useState(0)
   const [byoKey, setByoKey] = useState('')
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
@@ -148,7 +147,7 @@ export function WorkbenchView() {
       })
       .catch((err) => {
         if (controller.signal.aborted) return
-        setHistoryError(err instanceof ApiError ? err.detail : 'Could not load chat history.')
+        setHistoryError(formatApiError(err, 'Could not load chat history.'))
       })
       .finally(() => {
         if (!controller.signal.aborted) setHistoryLoading(false)
@@ -534,7 +533,6 @@ export function WorkbenchView() {
 
   const onIngested = (stats: IngestResponse) => {
     router.replace(`/workbench?doc=${encodeURIComponent(stats.document_id)}`)
-    setRefreshToken((token) => token + 1)
   }
 
   if (!ready) {
@@ -558,8 +556,7 @@ export function WorkbenchView() {
             Ingest a PDF, ask a question, inspect the sources.
           </h1>
           <p className="m-0 mt-2 text-[14px] leading-[1.5] opacity-65">
-            Every answer is grounded, every citation is clickable, and every collection delete is
-            typed-confirmed.
+            Every answer is grounded, and every citation is clickable.
           </p>
         </div>
 
@@ -590,10 +587,10 @@ export function WorkbenchView() {
               </div>
               {!waking && (
                 <div className="mt-4 flex flex-wrap gap-3">
-                  <Link href="/setup">
-                    <Button variant="ghost">Back to setup</Button>
+                  <Link href="/home">
+                    <Button variant="ghost">Back to home</Button>
                   </Link>
-                  <Button variant="chip" onClick={() => flash('Check the setup page for the next step')}>
+                  <Button variant="chip" onClick={() => flash('This reconnects automatically once the backend responds')}>
                     What now?
                   </Button>
                 </div>
@@ -745,7 +742,12 @@ export function WorkbenchView() {
         </div>
 
         {hasRail && (
-          <div className="grid min-w-0 content-start gap-4">
+          // Between lg and xl there are only 2 explicit columns (see the
+          // comment above), so without an explicit span this wraps into
+          // column 1 alone and leaves a dead gap beside it in column 2 —
+          // col-span-2 makes it take the full row there instead; xl:col-span-1
+          // hands it back its own dedicated third column once one exists.
+          <div className="grid min-w-0 content-start gap-4 lg:col-span-2 xl:col-span-1">
             <Panel>
               <PanelHeader
                 title="History"
@@ -876,9 +878,9 @@ export function WorkbenchView() {
           )}
         </div>
 
-        {/* Pipeline and Collections are reference material, not part of the
-            ask-and-read loop — full width underneath, so neither pushes the
-            answer down the page. */}
+        {/* Pipeline is reference material, not part of the ask-and-read
+            loop — full width underneath, so it doesn't push the answer
+            down the page. */}
         <div className={`grid min-w-0 gap-7 lg:col-span-2 ${hasRail ? 'xl:col-span-3' : ''}`}>
           <Panel>
             <PanelHeader
@@ -891,8 +893,6 @@ export function WorkbenchView() {
               </div>
             </div>
           </Panel>
-
-          <CollectionsPanel refreshToken={refreshToken} />
         </div>
       </div>
     </main>

@@ -10,7 +10,8 @@ import { FileText, Plus, Trash2 } from 'lucide-react'
 
 import { useAuth, useRequireAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/useToast'
-import { ApiError, deleteDocument, listDocuments } from '@/services/api'
+import { formatApiError } from '@/lib/apiError'
+import { deleteDocument, listDocuments } from '@/services/api'
 import type { DocumentSummary } from '@/types/api'
 import { Button, Eyebrow, Mono, Panel, PanelHeader, Spinner } from '@/components/ui'
 
@@ -41,7 +42,7 @@ export function HomeView() {
       setError(null)
     } catch (err) {
       if (signal?.aborted) return
-      setError(err instanceof ApiError ? err.detail : 'Could not load your documents.')
+      setError(formatApiError(err, 'Could not load your documents.'))
     }
   }, [])
 
@@ -63,7 +64,7 @@ export function HomeView() {
         setDocuments((current) => (current ?? []).filter((d) => d.id !== doc.id))
         flash('Document deleted.')
       } catch (err) {
-        flash(err instanceof ApiError ? err.detail : 'Delete failed.')
+        flash(formatApiError(err, 'Delete failed.'))
       } finally {
         setDeleting(null)
       }

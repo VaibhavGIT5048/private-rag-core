@@ -1,8 +1,8 @@
 """Embedding providers — self-hosted bge-m3 by default, plain OpenAI for BYO-key.
 
 Both expose embed_documents()/embed_query() returning plain float lists, the
-same shape APP/vector_store.py and APP/quality_gate.py already consume via
-the old EmbeddingAdapter — swapping providers needs no changes downstream.
+same shape APP/rag/vector_store.py and APP/rag/quality_gate.py already consume
+via the old EmbeddingAdapter — swapping providers needs no changes downstream.
 """
 
 from __future__ import annotations

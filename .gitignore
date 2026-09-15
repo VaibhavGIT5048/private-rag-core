@@ -16,3 +16,8 @@ __pycache__/
 data
 *.pdf
 RG=*.yml
+
+# Generated cross-project reference notes (not part of this app; scratch
+# output for carrying design decisions into a future project).
+RAG_PIPELINE_FOUNDATION.txt
+REUSABLE_FOUNDATION.txt

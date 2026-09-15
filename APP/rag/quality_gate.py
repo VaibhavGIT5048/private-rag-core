@@ -6,6 +6,8 @@ import tiktoken
 from dotenv import load_dotenv
 from langchain_core.documents import Document
 
+from APP.rag.chunking import save_chunks_jsonl
+
 # ─────────────────────────────────────────────────────────────────────
 # CONFIGURATION & INITIALIZATION
 # ─────────────────────────────────────────────────────────────────────
@@ -210,28 +212,6 @@ def apply_quality_gate(chunks: list[Document], threshold_score: float = 4.0, vec
     return processed_chunks
 
 
-def load_chunks_jsonl(path: str) -> list[Document]:
-    chunks = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            record = json.loads(line)
-            chunks.append(Document(
-                page_content=record["page_content"],
-                metadata=record["metadata"]
-            ))
-    return chunks
-
-
-def save_chunks_jsonl(chunks: list[Document], output_path: str) -> None:
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        for chunk in chunks:
-            f.write(json.dumps({
-                "page_content": chunk.page_content,
-                "metadata": chunk.metadata
-            }, ensure_ascii=False) + "\n")
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="data/chunks/chunks.jsonl")
@@ -239,7 +219,15 @@ if __name__ == "__main__":
     parser.add_argument("--threshold", type=float, default=4.0)
     args = parser.parse_args()
 
-    all_chunks = load_chunks_jsonl(args.input)
+    all_chunks = []
+    with open(args.input, "r", encoding="utf-8") as f:
+        for line in f:
+            record = json.loads(line)
+            all_chunks.append(Document(
+                page_content=record["page_content"],
+                metadata=record["metadata"]
+            ))
+
     processed = apply_quality_gate(all_chunks, threshold_score=args.threshold)
     save_chunks_jsonl(processed, args.output)
     print(f"Saved ALL chunks to {args.output}")

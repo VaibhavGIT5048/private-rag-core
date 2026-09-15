@@ -9,6 +9,7 @@ import { AlertTriangle } from 'lucide-react'
 
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/useToast'
+import { formatApiError } from '@/lib/apiError'
 import { ApiError, resendOtp, verifyOtp } from '@/services/api'
 import { Button, Eyebrow, Panel, PanelHeader, Spinner } from '@/components/ui'
 
@@ -67,7 +68,7 @@ export function VerifyEmailView() {
       // one either — that would turn this into an email-enumeration oracle.
       flash('If that account needs verification, a new code is on its way.')
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Could not resend the code.')
+      setError(formatApiError(err, 'Could not resend the code.'))
     }
   }, [cooldown, email, flash])
 

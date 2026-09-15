@@ -4,7 +4,7 @@
 // is what most visitors will see and judge the project by.
 
 import Link from 'next/link'
-import { ArrowRight, Github } from 'lucide-react'
+import { ArrowRight, ChevronDown, Github } from 'lucide-react'
 
 import { REPO_URL } from '@/config'
 import { useUiPrefs } from '@/hooks/useUiPrefs'
@@ -12,7 +12,7 @@ import { PipelineVisualiser, useLoopingStage } from '@/components/PipelineVisual
 import { Button, Eyebrow, Rule } from '@/components/ui'
 
 const HERO_STATS = [
-  { v: '2', k: 'retrieval indexes — dense + sparse' },
+  { v: '2', k: 'retrieval indexes: dense + sparse' },
   { v: '0.65 / 0.35', k: 'RRF fusion weighting' },
   { v: '±1', k: 'neighbour chunks expanded' },
   { v: '100%', k: 'answers carry citations' },
@@ -32,7 +32,7 @@ const ARCHITECTURE = [
   {
     role: 'Keywords',
     name: 'BM25',
-    note: 'Sparse index running alongside the vectors — catches exact terms embeddings miss.',
+    note: 'Sparse index running alongside the vectors, catching exact terms embeddings miss.',
   },
   {
     role: 'Reranker',
@@ -60,7 +60,7 @@ const FEATURES = [
   { t: 'Hybrid retrieval', d: 'Dense vectors and sparse keywords searched in parallel.' },
   {
     t: 'RRF fusion',
-    d: 'Reciprocal Rank Fusion merges both rankings — 0.65 dense, 0.35 sparse.',
+    d: 'Reciprocal Rank Fusion merges both rankings (0.65 dense, 0.35 sparse).',
   },
   { t: 'Reranking', d: 'Flashrank re-orders candidates by true relevance to the question.' },
   { t: 'Neighbour expansion', d: 'Pulls adjacent chunks so answers keep their context.' },
@@ -71,6 +71,29 @@ const FEATURES = [
   { t: 'Parser router', d: 'Routes PDF, Office, image and CSV files through local and OCR adapters with fallback tiers.' },
   { t: 'JWT + guardrails', d: 'Every document route is account-scoped and retrieved text is treated as untrusted data.' },
   { t: 'RAGAS harness', d: 'Faithfulness and relevancy measured offline, not guessed at.' },
+]
+
+const FAQS = [
+  {
+    q: 'Is my data private?',
+    a: 'Yes. Every document, embedding, and chat history is scoped to your account — retrieval is filtered by owner on every query, so another user can never see or search your documents.',
+  },
+  {
+    q: 'Do you use my documents to train any model?',
+    a: 'No. Documents are used only to answer your own questions about them. Nothing you upload is used for training.',
+  },
+  {
+    q: 'What happens when I delete a document?',
+    a: "Deleting a document removes its database record, its vectors from storage, and its retrieval index — it isn't just hidden from the list.",
+  },
+  {
+    q: 'Which file types are supported?',
+    a: 'PDF, TXT, Markdown, CSV, JSON, Word, PowerPoint, Excel, and common image formats (PNG, JPG, WEBP), routed through local parsing or an OCR fallback depending on the file.',
+  },
+  {
+    q: 'Can I use my own OpenAI key?',
+    a: 'Yes, from the workbench. It swaps the model that generates answers; retrieval always uses the same embedding model a document was indexed with. Your key is sent with the request and never stored on the backend.',
+  },
 ]
 
 const SECURITY = [
@@ -98,7 +121,7 @@ export function LandingView() {
           keep the answer tied to the source.
         </p>
         <div className="flex flex-wrap items-center gap-3">
-          <Link href="/setup">
+          <Link href="/signin">
             <Button variant="cta" breathe>
               Try it yourself <ArrowRight size={16} aria-hidden />
             </Button>
@@ -144,7 +167,7 @@ export function LandingView() {
               Retrieve first. Answer only from what was retrieved. Cite it.
             </h3>
             <p className="m-0 leading-[1.6] opacity-70">
-              The document is split around its own structure, scored for quality, and indexed twice —
+              The document is split around its own structure, scored for quality, and indexed twice:
               dense vectors and sparse keywords. Every question is rewritten against recent chat,
               fused, reranked, and handed only the surviving chunks.
             </p>
@@ -160,7 +183,7 @@ export function LandingView() {
             className="text-[12px] opacity-55"
             title="Illustrative view of the backend pipeline"
           >
-            Illustrative view of the backend pipeline — not measured telemetry.
+            Illustrative view of the backend pipeline, not measured telemetry.
           </span>
           <span className="text-[12px] font-extrabold opacity-65">Hover a stage for a plain-language explanation.</span>
         </div>
@@ -245,6 +268,30 @@ export function LandingView() {
         </div>
       </section>
 
+      <section className="mx-auto max-w-[1180px] px-[26px] pb-[90px]">
+        <Rule className="mb-10" />
+        <h2 className="m-0 mb-7 text-[38px] font-extrabold tracking-[-0.03em]">Frequently asked</h2>
+        <div className="grid max-w-[760px] gap-[2px]" style={{ background: 'var(--brd)' }}>
+          {FAQS.map((item) => (
+            <details
+              key={item.q}
+              className="group p-5 transition-colors"
+              style={{ background: 'var(--panel)', backdropFilter: 'var(--blur)' }}
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-[16px] font-extrabold tracking-[-0.01em] marker:content-none">
+                {item.q}
+                <ChevronDown
+                  size={18}
+                  aria-hidden
+                  className="shrink-0 opacity-55 transition-transform duration-200 group-open:rotate-180"
+                />
+              </summary>
+              <p className="m-0 mt-3 max-w-[64ch] text-[14px] leading-[1.6] opacity-70">{item.a}</p>
+            </details>
+          ))}
+        </div>
+      </section>
+
       <footer style={{ borderTop: 'var(--brd-w) solid var(--brd)' }}>
         <div className="mx-auto flex max-w-[1180px] flex-wrap items-center gap-6 px-[26px] py-7 text-[13px]">
           <a href={REPO_URL} target="_blank" rel="noreferrer" className="font-extrabold">
@@ -252,9 +299,12 @@ export function LandingView() {
           </a>
           <span className="opacity-55">MIT licence</span>
           <span className="opacity-55">Vaibhav · Semantic Q&amp;A over Large Documents</span>
+          <Link href="/privacy" className="font-extrabold opacity-70 hover:opacity-100">
+            Privacy Policy
+          </Link>
           <div className="flex-1" />
-          <Link href="/setup">
-            <Button variant="ghost">Run it locally →</Button>
+          <Link href="/signin">
+            <Button variant="ghost">Sign in →</Button>
           </Link>
         </div>
       </footer>

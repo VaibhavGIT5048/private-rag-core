@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Github, Mail } from 'lucide-react'
+import { Eye, EyeOff, Github, Mail } from 'lucide-react'
 
 import { AUTH_CALLBACK_URL, GITHUB_CLIENT_ID, GOOGLE_CLIENT_ID, STORAGE_KEYS } from '@/config'
 import { useAuth } from '@/hooks/useAuth'
@@ -33,6 +33,7 @@ export function SignInView() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
 
   // Already signed in — don't make them do it again.
   useEffect(() => {
@@ -172,18 +173,29 @@ export function SignInView() {
             <label htmlFor="password" className="mt-1 text-[11px] font-extrabold uppercase tracking-[0.1em] opacity-55">
               Password
             </label>
-            <input
-              id="password"
-              type="password"
-              required
-              minLength={8}
-              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={mode === 'signup' ? 'At least 8 characters' : '••••••••'}
-              className="w-full px-[12px] py-[10px] text-[14px]"
-              style={fieldStyle}
-            />
+            <div className="relative">
+              <input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                required
+                minLength={8}
+                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={mode === 'signup' ? 'At least 8 characters' : '••••••••'}
+                className="w-full px-[12px] py-[10px] pr-10 text-[14px]"
+                style={fieldStyle}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
+                className="absolute right-0 top-0 flex h-full w-10 cursor-pointer items-center justify-center border-0 bg-transparent opacity-60 hover:opacity-100"
+              >
+                {showPassword ? <EyeOff size={16} aria-hidden /> : <Eye size={16} aria-hidden />}
+              </button>
+            </div>
 
             {error && (
               <div

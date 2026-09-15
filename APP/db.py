@@ -20,7 +20,11 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL UNIQUE,
     email_verified INTEGER NOT NULL DEFAULT 0,
     password_hash TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT,
+    privacy_policy_version TEXT,
+    privacy_policy_accepted_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS auth_identities (
@@ -92,9 +96,26 @@ def _connect() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+# Columns added after the table already existed in deployed databases —
+# CREATE TABLE IF NOT EXISTS above never retrofits an existing table, so each
+# one needs its own ALTER TABLE here. Failing with "duplicate column" is the
+# expected outcome once a database has already picked a migration up.
+_MIGRATIONS = (
+    "ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN locked_until TEXT",
+    "ALTER TABLE users ADD COLUMN privacy_policy_version TEXT",
+    "ALTER TABLE users ADD COLUMN privacy_policy_accepted_at TEXT",
+)
+
+
 def init_db() -> None:
     with _connect() as conn:
         conn.executescript(SCHEMA)
+        for migration in _MIGRATIONS:
+            try:
+                conn.execute(migration)
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
 
 # --------------------------------------------------------------------------- #
@@ -136,6 +157,61 @@ def create_user(email: str, *, password_hash: str | None = None, email_verified:
 def set_email_verified(user_id: str) -> None:
     with _connect() as conn:
         conn.execute("UPDATE users SET email_verified = 1 WHERE id = ?", (user_id,))
+
+
+# --------------------------------------------------------------------------- #
+# Login lockout — protects the password path even with a rate limit in front
+# of it, since a limit alone still allows slow, distributed guessing.
+# --------------------------------------------------------------------------- #
+
+LOCKOUT_THRESHOLD = 5
+LOCKOUT_MINUTES = 15
+
+
+def is_locked(user: sqlite3.Row) -> bool:
+    locked_until = user["locked_until"]
+    if not locked_until:
+        return False
+    return datetime.now(timezone.utc) < datetime.fromisoformat(locked_until)
+
+
+def record_failed_login(user_id: str) -> None:
+    with _connect() as conn:
+        row = conn.execute("SELECT failed_login_attempts FROM users WHERE id = ?", (user_id,)).fetchone()
+        attempts = (row["failed_login_attempts"] if row else 0) + 1
+        locked_until = None
+        if attempts >= LOCKOUT_THRESHOLD:
+            locked_until = (datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)).isoformat()
+        conn.execute(
+            "UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?",
+            (attempts, locked_until, user_id),
+        )
+
+
+def reset_failed_logins(user_id: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?", (user_id,)
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Privacy policy consent
+# --------------------------------------------------------------------------- #
+
+def has_accepted_privacy_policy(user: sqlite3.Row, current_version: str) -> bool:
+    """Versioned, not a one-time flag: bumping `current_version` re-prompts
+    everyone who agreed to an older version rather than grandfathering them in.
+    """
+    return user["privacy_policy_version"] == current_version
+
+
+def record_privacy_policy_acceptance(user_id: str, version: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET privacy_policy_version = ?, privacy_policy_accepted_at = ? WHERE id = ?",
+            (version, _now(), user_id),
+        )
 
 
 def link_identity(user_id: str, provider: str, provider_user_id: str) -> None:

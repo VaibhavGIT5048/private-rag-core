@@ -17,14 +17,11 @@ export interface IngestResponse {
   collection_name: string
   filename: string
   file_type: string
-  pdfs: number | null
   pages: number
   chunks: number
   passed_chunks: number
   penalised_chunks: number
   indexed_chunks: number
-  /** Which parser tier produced the text — 'local-pdf', 'azure-document-intelligence', etc. */
-  parser_used: string | null
 }
 
 export interface SourceChunk {
@@ -41,18 +38,6 @@ export interface QueryResponse {
   answer: string
   sources: SourceChunk[]
   model: string
-  collection_name: string
-}
-
-export interface CollectionInfo {
-  name: string
-  vectors_count: number | null
-  status: string | null
-}
-
-export interface DeleteCollectionResponse {
-  deleted: string
-  request_id: string
 }
 
 export interface IngestParams {
@@ -76,11 +61,13 @@ export interface AuthTokenResponse {
   access_token: string
   user_id: string
   email: string
+  privacy_policy_accepted: boolean
 }
 
 export interface User {
   id: string
   email: string
+  privacyPolicyAccepted: boolean
 }
 
 export interface DocumentSummary {
@@ -88,7 +75,6 @@ export interface DocumentSummary {
   filename: string
   ingested_at: string
   pages: number | null
-  chunks: number | null
   indexed_chunks: number | null
 }
 

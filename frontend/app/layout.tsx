@@ -13,11 +13,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // data-theme is set to nightglass up-front so first paint matches the
+    // data-theme is set to dark up-front so first paint matches the
     // default; UiPrefsProvider corrects it from localStorage on mount.
     <html
       lang="en"
-      data-theme="nightglass"
+      data-theme="dark"
       data-motion="full"
       style={{ ['--font-archivo' as never]: fontStack }}
     >

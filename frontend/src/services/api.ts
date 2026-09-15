@@ -6,8 +6,6 @@ import { API_BASE_URL, BYO_OPENAI_KEY_HEADER, ROUTES, STORAGE_KEYS, TIMEOUTS } f
 import type {
   AuthTokenResponse,
   ChatTurnSummary,
-  CollectionInfo,
-  DeleteCollectionResponse,
   DeleteDocumentResponse,
   DocumentSummary,
   HealthStatus,
@@ -238,6 +236,14 @@ export function signInWithGoogle(code: string, redirectUri: string) {
   })
 }
 
+export function acceptPrivacyPolicy() {
+  return request<{ detail: string; privacy_policy_version: string }>(ROUTES.authAcceptPrivacyPolicy, {
+    method: 'POST',
+    headers: authHeaders(),
+    timeout: TIMEOUTS.auth,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Documents
 // ---------------------------------------------------------------------------
@@ -316,21 +322,5 @@ export function query(documentId: string, question: string, topK: number, byoOpe
     headers: authHeaders(extra),
     body: JSON.stringify({ document_id: documentId, question, top_k: topK }),
     timeout: TIMEOUTS.query,
-  })
-}
-
-// ---------------------------------------------------------------------------
-// Collections (admin-ish, unchanged)
-// ---------------------------------------------------------------------------
-
-export function listCollections() {
-  return request<CollectionInfo[]>(ROUTES.collections, { timeout: TIMEOUTS.health })
-}
-
-export function deleteCollection(name: string) {
-  return request<DeleteCollectionResponse>(ROUTES.collection(name), {
-    method: 'DELETE',
-    headers: authHeaders(),
-    timeout: TIMEOUTS.health,
   })
 }

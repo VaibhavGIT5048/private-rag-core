@@ -1,26 +1,23 @@
 'use client'
 
-// Sticky chrome shown on every route: brand, nav, connectivity badge, theme and
-// motion controls, repo link, instructions download. Also hosts the two global
-// banners (backend-connected on landing, reconnecting on workbench).
+// Sticky chrome shown on every route: brand, nav, connectivity badge, theme
+// toggle, repo link. Also hosts the two global banners (backend-connected on
+// landing, reconnecting on workbench).
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Download, Github } from 'lucide-react'
+import { Github } from 'lucide-react'
 
-import { API_BASE_URL, REPO_URL, SITE_URL } from '@/config'
+import { API_BASE_URL, REPO_URL } from '@/config'
 import { useHealth } from '@/hooks/useHealth'
 import { useAuth } from '@/hooks/useAuth'
-import { useToast } from '@/hooks/useToast'
-import { useUiPrefs, type Motion } from '@/hooks/useUiPrefs'
-import { downloadReadme } from '@/lib/readme'
+import { useUiPrefs } from '@/hooks/useUiPrefs'
 import { Button, Spinner } from '@/components/ui'
 import { StatusBadge } from '@/components/StatusBadge'
 import { BrandMark } from '@/components/BrandMark'
 
 const NAV = [
   { href: '/', label: 'Overview' },
-  { href: '/setup', label: 'Setup' },
   { href: '/home', label: 'Home' },
   { href: '/workbench', label: 'Workbench' },
 ]
@@ -28,20 +25,14 @@ const NAV = [
 export function Header() {
   const router = useRouter()
   const pathname = usePathname() ?? '/'
-  const { theme, setTheme, motion, setMotion } = useUiPrefs()
+  const { theme, setTheme } = useUiPrefs()
   const { isConnected, reconnecting } = useHealth()
-  const { flash } = useToast()
   const { user, hydrated, isAuthenticated, signOut } = useAuth()
 
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href)
 
-  const onDownload = () => {
-    downloadReadme()
-    flash('README.txt downloaded')
-  }
-
-  const dark = theme === 'nightglass'
+  const dark = theme === 'dark'
   const themeBtn = (active: boolean): React.CSSProperties => ({
     background: active ? 'var(--accent)' : 'transparent',
     color: active ? 'var(--on-accent)' : 'var(--ink)',
@@ -50,6 +41,13 @@ export function Header() {
 
   return (
     <>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:px-4 focus:py-2 focus:text-[13px] focus:font-extrabold"
+        style={{ background: 'var(--accent)', color: 'var(--on-accent)', borderRadius: 'var(--r-sm)' }}
+      >
+        Skip to content
+      </a>
       <header
         className="sticky top-0 z-40 flex flex-wrap items-center gap-5 px-[26px] py-3"
         style={{
@@ -99,51 +97,22 @@ export function Header() {
           aria-label="Theme"
         >
           <button
-            onClick={() => setTheme('modernist')}
+            onClick={() => setTheme('light')}
             aria-pressed={!dark}
             className="cursor-pointer border-0 px-[10px] py-[6px] text-[11.5px] font-extrabold"
             style={themeBtn(!dark)}
           >
-            Modernist
+            Light
           </button>
           <button
-            onClick={() => setTheme('nightglass')}
+            onClick={() => setTheme('dark')}
             aria-pressed={dark}
             className="cursor-pointer border-0 px-[10px] py-[6px] text-[11.5px] font-extrabold"
             style={themeBtn(dark)}
           >
-            Nightglass
+            Dark
           </button>
         </div>
-
-        <div className="flex items-center gap-[7px]">
-          <label
-            htmlFor="motion"
-            className="text-[11px] font-extrabold uppercase tracking-[0.1em] opacity-50"
-          >
-            Motion
-          </label>
-          <select
-            id="motion"
-            value={motion}
-            onChange={(e) => setMotion(e.target.value as Motion)}
-            className="px-[7px] py-[5px] text-[12px] font-extrabold"
-            style={{
-              color: 'var(--ink)',
-              background: 'var(--chip-bg)',
-              border: 'var(--brd-w) solid var(--brd)',
-              borderRadius: 'var(--r-sm)',
-            }}
-          >
-            <option value="full">Full</option>
-            <option value="reduced">Reduced</option>
-            <option value="off">Off</option>
-          </select>
-        </div>
-
-        <Button variant="ghost" onClick={onDownload}>
-          <Download size={13} aria-hidden /> Instructions
-        </Button>
 
         {hydrated && (isAuthenticated ? (
           <div className="flex items-center gap-2">
@@ -153,15 +122,6 @@ export function Header() {
         ) : (
           <Link href="/signin"><Button variant="solid">Sign in</Button></Link>
         ))}
-
-        <a
-          href={SITE_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-[6px] text-[12px] font-extrabold"
-        >
-          Live site
-        </a>
 
         <a
           href={REPO_URL}
