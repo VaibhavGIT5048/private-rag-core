@@ -4,7 +4,7 @@ Semantic Question Answering over Large Documents using Retrieval-Augmented
 Generation
 ================================================================================
 
-Document generated: 2026-08-13
+Document generated: 2026-08-13. Refreshed: 2026-09-16.
 Repository: github.com/VaibhavGIT5048/private-rag-core
 Live (dev):  https://vaibhavgit5048.github.io/private-rag-core/dev/
 Live (prod): https://vaibhavgit5048.github.io/private-rag-core/
@@ -261,6 +261,12 @@ INGEST PATH (POST /ingest, or POST /ingest/async for large files):
      document_id and owner_id in the payload; a BM25 index is pickled to
      data/documents/{owner_id}/{document_id}/bm25.pkl.
   8. RECORD — a row in the SQLite `documents` table.
+  9. LOG TIMINGS — `RAGService.ingest()` carries the same `_mark()`/monotonic
+     per-stage instrumentation as `answer()` (step 15 below), emitting
+     `ingest_timings` (parse_ms, chunk_ms, embed_ms, quality_gate_ms, index_ms)
+     as one structured log line. Added so "ingest feels slow" is diagnosable
+     the same way a slow query already was, instead of being the one half of
+     the pipeline with no per-stage visibility.
 
 QUERY PATH (POST /query):
 
@@ -668,8 +674,10 @@ were byte-identical in the current tree.
   * TypeScript in strict mode.
   * Tailwind CSS 3.4 for layout utilities, layered over a CSS custom-property
     design system.
-  * framer-motion for motion, with a global motion preference (Full / Reduced /
-    Off) that genuinely disables animation rather than just slowing it.
+  * framer-motion for motion. There is no manual on/off control (the earlier
+    3-way selector was removed as dead weight for a hosted product) — motion
+    runs full unless the OS-level `prefers-reduced-motion: reduce` is set, in
+    which case it genuinely disables animation rather than just slowing it.
   * lucide-react for icons.
   * react-markdown for answer rendering.
 
@@ -698,7 +706,9 @@ autocomplete. Practically, that shaped three things worth recording:
 --------------------------------------------------------------------------------
   /              Landing — what the system is, architecture summary, and an
                  accurate "where your data goes" disclosure.
-  /setup         Setup instructions with three downloadable config files.
+  /privacy       Standalone Privacy Policy page — the full text the consent
+                 modal (7.9) links out to; also reachable from the landing
+                 page footer.
   /signin        All three sign-in methods in one place: GitHub OAuth, Google
                  OAuth, and email+password (which toggles between sign-in and
                  create-account).
@@ -1212,6 +1222,16 @@ EMAIL + PASSWORD WITH OTP ACTIVATION.
   * Resend is cooldown-limited (1/minute) INDEPENDENTLY of the general rate
     limiter, because OTP endpoints are a standing abuse target — an email-send
     endpoint without a cooldown is both a spam vector and a cost vector.
+  * SIGNUP DOES NOT LEAK WHETHER AN EMAIL EXISTS. Signing up with an address
+    that already has a verified account used to return 409 Conflict; a
+    different response for "exists" vs "doesn't" is a textbook enumeration
+    oracle. Both cases now return the identical
+    `{"detail": "Verification code sent"}`, and no code is actually sent to
+    an address that didn't request one.
+  * LOGIN LOCKS AFTER REPEATED FAILURES. Independently of the rate limiter
+    below, 5 failed login attempts on one account trigger a 15-minute lock
+    (tracked in the `users` table, reset on a successful login), so a
+    correctly-guessed password after a long spray still doesn't get in.
 
 7.3 RATE LIMITING AND ABUSE CONTROL
 --------------------------------------------------------------------------------
@@ -1220,11 +1240,12 @@ address. Since login is mandatory, every request has a real identity, which
 makes per-user limits both possible and fairer than IP limits (IP limits punish
 shared networks and are trivially evaded).
 
-  POST /ingest : 10/hour/user   (INGEST_RATE_LIMIT)
-  POST /query  : 60/hour/user   (QUERY_RATE_LIMIT)
+  POST /ingest      : 10/hour/user   (INGEST_RATE_LIMIT)
+  POST /query       : 60/hour/user   (QUERY_RATE_LIMIT)
+  POST /auth/login  : 10/minute      (LOGIN_RATE_LIMIT)
 
-Both are environment-overridable without a code change. Exceeding a limit
-returns HTTP 429.
+All three are environment-overridable without a code change. Exceeding a
+limit returns HTTP 429.
 
 WHY THESE ENDPOINTS SPECIFICALLY: they are the ones that cost real money and
 real CPU. /ingest runs OCR (metered per page) and a full embedding pass; /query
@@ -1255,6 +1276,20 @@ independently, so that no single mistake is sufficient to break it:
     out explicitly in the cache module because a key omitting the owner would be
     a silent cross-tenant leak, and it was verified with a test asserting that a
     second owner cannot read the first's cached entry.
+  * DELETE ACTUALLY DELETES. `remove_document` purges the document's Qdrant
+    vectors (filtered on document_id + owner_id, the same filter every query
+    uses) and its BM25 pickle directory, not just the SQLite row — a document
+    that no longer shows up in the UI can no longer be retrieved against
+    either.
+  * A LEGACY `/collections` FEATURE WAS REMOVED FOR VIOLATING THIS PROPERTY.
+    Because there is one SHARED Qdrant collection for every user (isolation is
+    by payload filter, not one collection per user — see 5.1), an earlier
+    `/collections` endpoint pair exposed an unauthenticated
+    GET (enumerate collection names) and a DELETE reachable by ANY authenticated
+    user regardless of ownership. Both the endpoints and the frontend panel
+    that called them (CollectionsPanel.tsx / DeleteCollectionModal.tsx) were
+    deleted outright rather than patched, since nothing about the feature was
+    salvageable without redesigning it around per-owner authorization first.
 
 7.5 TRANSPORT, HEADERS AND SECRETS
 --------------------------------------------------------------------------------
@@ -1273,6 +1308,17 @@ independently, so that no single mistake is sufficient to break it:
   * NON-ROOT CONTAINER. The image runs as `appuser`, not root.
   * REQUEST IDs. Every request carries an `X-Request-ID` through structured
     logs, so an incident can be traced without logging request bodies.
+  * SECURITY HEADERS. The same request-context middleware adds
+    Strict-Transport-Security, X-Frame-Options and X-Content-Type-Options to
+    every response.
+  * /docs, /redoc AND /openapi.json ARE GATED. Off by default everywhere;
+    `DISABLE_API_DOCS=true` turns them off explicitly for a given environment
+    (set on the production Container App) without needing a prod/staging
+    signal the app doesn't otherwise have.
+  * UPLOAD SIZE IS CAPPED. `/ingest` and `/ingest/async` reject anything over
+    `MAX_UPLOAD_BYTES` (50MB default) with 413, before it reaches parsing.
+  * DEPENDENCY UPDATES ARE AUTOMATED. Dependabot watches pip, npm, the
+    Dockerfile base image, and GitHub Actions versions on a weekly cadence.
 
 7.6 PLANNED — PII DETECTION AND REDACTION
 --------------------------------------------------------------------------------
@@ -1372,9 +1418,41 @@ honest assessment is that the STRUCTURAL boundary in layer 2 is doing most of
 the real work today, and a firewall's classifier-based detection would be an
 additional probabilistic layer on top rather than a replacement for it.
 
+7.9 PRIVACY POLICY, CONSENT, AND CRISIS-LANGUAGE SAFETY
+--------------------------------------------------------------------------------
+MANDATORY POST-AUTH CONSENT. Every sign-in path — email/OTP, GitHub OAuth,
+Google OAuth — can leave a user without a recorded acceptance of the current
+Privacy Policy. `PrivacyConsentModal` is mounted globally (in `providers.tsx`,
+not per-page) so it appears regardless of which of the four paths just
+authenticated the user. It cannot be dismissed via backdrop click or Escape;
+the only ways out are agreeing or signing out.
 
-================================================================================
-8. RAG EVALUATION AND METRICS (RAGAS)
+  * SCROLL-TO-BOTTOM GATE. The "I agree" checkbox stays disabled until the
+    policy text has been scrolled to its end (with a fallback for content
+    short enough to need no scrolling at all) — an unread checkbox is not
+    informed consent.
+  * "View full Privacy Policy" opens `/privacy` — the same standalone page,
+    not a duplicated copy — in a new tab, so the modal itself can stay short.
+  * The modal excludes itself on the `/privacy` route (matched with
+    `.startsWith`, not `===`, per the `trailingSlash: true` export config —
+    an exact match would miss the trailing-slash form the router can return),
+    so visiting the policy directly is never blocked by the thing that links
+    to it.
+  * CONSENT IS STORED SERVER-SIDE, NOT JUST IN LOCALSTORAGE. `POST
+    /auth/accept-privacy-policy` stamps `privacy_policy_version` and
+    `privacy_policy_accepted_at` on the user row. `AuthTokenResponse` carries
+    `privacy_policy_accepted: bool`, computed by comparing the stored version
+    against `PRIVACY_POLICY_VERSION` — so bumping that env var re-prompts
+    every existing user the next time they authenticate, without a migration.
+
+CRISIS-LANGUAGE SAFETY RESPONSE. `guardrails.detect_crisis_language` screens
+incoming questions for self-harm/crisis language before retrieval runs. A
+match short-circuits `RAGService.answer()` straight to a fixed safety message
+(988 in the US, findahelpline.com internationally) — no document retrieval, no
+generation, no chance of a grounded-but-inappropriate answer to a question that
+was never really about the document.
+
+
 ================================================================================
 
 8.1 WHY RAG NEEDS ITS OWN EVALUATION DISCIPLINE
@@ -2517,7 +2595,9 @@ COLD-START UX
   respects its cooldown) — each landing on /home with a working JWT; upload two
   files, see both on /home, resume one, confirm its prior chat renders before
   asking anything new; confirm /home and /workbench redirect to /signin when
-  signed out while / and /setup remain public.
+  signed out while / and /setup remain public. (/setup was itself deleted in
+  a later cleanup pass once the app became a hosted product rather than a
+  self-hosted dev tool — see Appendix B.)
 
 --------------------------------------------------------------------------------
 A.6 THE FRONTEND MAKEOVER (post-Phase-4, driven by real usage)
