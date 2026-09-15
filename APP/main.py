@@ -26,7 +26,6 @@ from APP.jobs import job_store
 from APP.schemas import (
     AuthTokenResponse,
     ChatTurnSummary,
-    CollectionInfo,
     DeleteDocumentResponse,
     DocumentSummary,
     GoogleOAuthCallbackRequest,
@@ -406,20 +405,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         return response.model_copy(update={"request_id": getattr(request.state, "request_id", response.request_id)})
-
-    @app.get("/collections", response_model=list[CollectionInfo])
-    async def list_collections(request: Request) -> list[CollectionInfo]:
-        service = get_service(request)
-        return service.list_collections()
-
-    @app.delete("/collections/{name}")
-    async def delete_collection(request: Request, name: str, current_user=Depends(get_current_user)):
-        service = get_service(request)
-        try:
-            service.delete_collection(name)
-        except Exception as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return {"deleted": name, "request_id": getattr(request.state, "request_id", str(uuid4()))}
 
     # ----------------------------------------------------------------- #
     # Auth — GitHub/Google OAuth, email+password+OTP. None of these

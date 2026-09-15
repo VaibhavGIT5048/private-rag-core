@@ -43,7 +43,6 @@ from APP.security import (
 from APP.rag.quality_gate import apply_quality_gate, save_chunks_jsonl as save_processed_jsonl
 from APP.schemas import (
     ChatTurnSummary,
-    CollectionInfo,
     DocumentSummary,
     HealthStatus,
     IngestResponse,
@@ -112,30 +111,6 @@ class RAGService:
             return any(getattr(c, "name", None) == collection_name for c in collections)
         except Exception:
             return False
-
-    def list_collections(self) -> list[CollectionInfo]:
-        collections = []
-        try:
-            response = self.qdrant.get_collections().collections
-            for col in response:
-                info = getattr(col, "name", None)
-                if not info:
-                    continue
-                vectors_count = None
-                status = None
-                try:
-                    details = self.qdrant.get_collection(info)
-                    vectors_count = getattr(details, "vectors_count", None)
-                    status = getattr(details, "status", None)
-                except Exception:
-                    pass
-                collections.append(CollectionInfo(name=info, vectors_count=vectors_count, status=status))
-        except Exception:
-            return []
-        return collections
-
-    def delete_collection(self, name: str) -> None:
-        self.qdrant.delete_collection(name)
 
     def _load_upload_to_docs(self, filename: str, raw_bytes: bytes) -> tuple[list[Document], str]:
         """Extracts text via the parser router, returning the documents and

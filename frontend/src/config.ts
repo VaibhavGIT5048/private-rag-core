@@ -37,8 +37,6 @@ export const ROUTES = {
   ingestAsync: '/ingest/async',
   ingestJob: (id: string) => `/ingest/jobs/${encodeURIComponent(id)}`,
   query: '/query',
-  collections: '/collections',
-  collection: (name: string) => `/collections/${encodeURIComponent(name)}`,
   documents: '/documents',
   document: (id: string) => `/documents/${encodeURIComponent(id)}`,
   documentHistory: (id: string) => `/documents/${encodeURIComponent(id)}/history`,

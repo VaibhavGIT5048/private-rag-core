@@ -28,7 +28,6 @@ import {
 import { MAX_PIPE_STAGE, QUERY_STAGES } from '@/lib/pipeline'
 import { ApiError, getChatHistory, query } from '@/services/api'
 import type { ChatTurnSummary, IngestResponse, SourceChunk } from '@/types/api'
-import { CollectionsPanel } from '@/components/CollectionsPanel'
 import { IngestPanel } from '@/components/IngestPanel'
 import { PipelineVisualiser } from '@/components/PipelineVisualiser'
 import { Button, Eyebrow, Mono, Panel, PanelHeader, Spinner } from '@/components/ui'
@@ -95,7 +94,6 @@ export function WorkbenchView() {
   // without needing to be written here too.
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null)
   const [focus, setFocus] = useState<CitationFocus | null>(null)
-  const [refreshToken, setRefreshToken] = useState(0)
   const [byoKey, setByoKey] = useState('')
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
@@ -534,7 +532,6 @@ export function WorkbenchView() {
 
   const onIngested = (stats: IngestResponse) => {
     router.replace(`/workbench?doc=${encodeURIComponent(stats.document_id)}`)
-    setRefreshToken((token) => token + 1)
   }
 
   if (!ready) {
@@ -558,8 +555,7 @@ export function WorkbenchView() {
             Ingest a PDF, ask a question, inspect the sources.
           </h1>
           <p className="m-0 mt-2 text-[14px] leading-[1.5] opacity-65">
-            Every answer is grounded, every citation is clickable, and every collection delete is
-            typed-confirmed.
+            Every answer is grounded, and every citation is clickable.
           </p>
         </div>
 
@@ -881,9 +877,9 @@ export function WorkbenchView() {
           )}
         </div>
 
-        {/* Pipeline and Collections are reference material, not part of the
-            ask-and-read loop — full width underneath, so neither pushes the
-            answer down the page. */}
+        {/* Pipeline is reference material, not part of the ask-and-read
+            loop — full width underneath, so it doesn't push the answer
+            down the page. */}
         <div className={`grid min-w-0 gap-7 lg:col-span-2 ${hasRail ? 'xl:col-span-3' : ''}`}>
           <Panel>
             <PanelHeader
@@ -896,8 +892,6 @@ export function WorkbenchView() {
               </div>
             </div>
           </Panel>
-
-          <CollectionsPanel refreshToken={refreshToken} />
         </div>
       </div>
     </main>

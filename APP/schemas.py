@@ -135,9 +135,3 @@ class HealthStatus(BaseModel):
     qdrant: str
     openai: str
     collection_name: str | None = None
-
-
-class CollectionInfo(BaseModel):
-    name: str
-    vectors_count: int | None = None
-    status: str | None = None

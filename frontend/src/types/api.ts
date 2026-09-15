@@ -44,17 +44,6 @@ export interface QueryResponse {
   collection_name: string
 }
 
-export interface CollectionInfo {
-  name: string
-  vectors_count: number | null
-  status: string | null
-}
-
-export interface DeleteCollectionResponse {
-  deleted: string
-  request_id: string
-}
-
 export interface IngestParams {
   file: File
   chunkSize: number
