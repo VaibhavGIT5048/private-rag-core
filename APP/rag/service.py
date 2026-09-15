@@ -141,22 +141,40 @@ class RAGService:
         return self.embedding_provider.embed_documents(texts)
 
     def ingest(self, owner_id: str, filename: str, raw_bytes: bytes, chunk_size: int, chunk_overlap: int, quality_threshold: float) -> IngestResponse:
+        # Per-stage timings, same rationale as answer()'s query_timings: "large
+        # files are slow" isn't actionable on its own — OCR-bound and
+        # embedding-bound documents need completely different fixes, and
+        # without this ingest was the one request path with no visibility
+        # into where its time actually went.
+        timings: dict[str, float] = {}
+        started = monotonic()
+
+        def _mark(stage: str) -> None:
+            nonlocal started
+            now = monotonic()
+            timings[stage] = round((now - started) * 1000, 1)
+            started = now
+
         docs, parser_used = self._load_upload_to_docs(filename, raw_bytes)
+        _mark("parse_ms")
         if not docs:
             raise ValueError(f"No text could be extracted from {filename}")
 
         chunks = chunk_documents(docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         Path("data/chunks").mkdir(parents=True, exist_ok=True)
         save_chunks_jsonl(chunks, "data/chunks/chunks.jsonl")
+        _mark("chunk_ms")
 
         # Compute every chunk's embedding once, up front — feeds both the
         # quality-gate overlap check and indexing below, collapsing what
         # used to be three separate embedding passes into one.
         vectors = self._embed_all([c.page_content for c in chunks])
+        _mark("embed_ms")
 
         processed_chunks = apply_quality_gate(chunks, threshold_score=quality_threshold, vectors=vectors)
         save_processed_jsonl(processed_chunks, "data/chunks/chunks_processed.jsonl")
         passed_chunks = [c for c in processed_chunks if c.metadata.get("passed_gate") is True]
+        _mark("quality_gate_ms")
 
         retrieval_chunks: list[Document] = []
         retrieval_vectors: list[list[float]] = []
@@ -173,12 +191,24 @@ class RAGService:
             retrieval_chunks, document_id=document_id, owner_id=owner_id,
             vectors=retrieval_vectors, embeddings=self.embedding_provider,
         )
+        _mark("index_ms")
         # Each ingest mints a fresh document_id, so nothing stale can be keyed
         # here today. Kept so the cache stays correct if ingest ever reuses an
         # id — re-indexing under a cached key is exactly how a cache starts
         # answering from content the document no longer contains.
         doc_cache.invalidate(owner_id, document_id)
         db.update_document_counts(document_id, chunks=len(retrieval_chunks), indexed_chunks=len(retrieval_chunks))
+
+        logger.info(
+            "ingest_timings",
+            document_id=document_id,
+            filename=filename,
+            parser_used=parser_used,
+            pages=len(docs),
+            chunks=len(chunks),
+            indexed_chunks=len(retrieval_chunks),
+            **timings,
+        )
 
         stats = IngestResponse(
             request_id=str(uuid4()),
