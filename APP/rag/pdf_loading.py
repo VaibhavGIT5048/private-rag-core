@@ -6,9 +6,9 @@ from typing import List
 from uuid import uuid4
 
 # pypdf is the declared extractor; pdfplumber is deliberately NOT a dependency.
-# This loader is the interim local-fallback tier only — Phase 3's parser router
-# (LiteParse / Document Intelligence / Mistral OCR) becomes the real extraction
-# layer, so adding a second PDF library here would be replaced work. Keep the
+# This loader is the permanent local-PDF tier that the parser router (APP/parsers/,
+# LiteParse / Document Intelligence / Mistral OCR) wraps rather than replaces —
+# so adding a second PDF library here would be replaced work. Keep the
 # optional import so an environment that happens to have pdfplumber still
 # works, but nothing installs it on purpose and pypdf is the tested path.
 try:

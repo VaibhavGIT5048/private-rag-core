@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # ─────────────────────────────────────────────────────────────────────
 # SYSTEM PROMPT — strict grounding, zero hallucination
-# Canonical export: api_service.py and ragas_evaluation.py import this.
+# Canonical export: APP/rag/service.py and eval/ragas_evaluation.py import this.
 # ─────────────────────────────────────────────────────────────────────
 # Loaded from prompts/system_prompt.md rather than inlined: the identity and
 # security rules are a security artefact, and keeping them in a file means they
