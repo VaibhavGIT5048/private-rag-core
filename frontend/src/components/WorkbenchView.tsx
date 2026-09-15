@@ -16,6 +16,7 @@ import { useRequireAuth } from '@/hooks/useAuth'
 import { useHealth } from '@/hooks/useHealth'
 import { useToast } from '@/hooks/useToast'
 import { useUiPrefs } from '@/hooks/useUiPrefs'
+import { formatApiError } from '@/lib/apiError'
 import {
   CITE_SCHEME,
   formatScore,
@@ -146,7 +147,7 @@ export function WorkbenchView() {
       })
       .catch((err) => {
         if (controller.signal.aborted) return
-        setHistoryError(err instanceof ApiError ? err.detail : 'Could not load chat history.')
+        setHistoryError(formatApiError(err, 'Could not load chat history.'))
       })
       .finally(() => {
         if (!controller.signal.aborted) setHistoryLoading(false)

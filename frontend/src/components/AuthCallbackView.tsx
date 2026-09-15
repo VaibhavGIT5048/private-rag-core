@@ -12,7 +12,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 
 import { AUTH_CALLBACK_URL, STORAGE_KEYS } from '@/config'
 import { useAuth } from '@/hooks/useAuth'
-import { ApiError, signInWithGithub, signInWithGoogle } from '@/services/api'
+import { formatApiError } from '@/lib/apiError'
+import { signInWithGithub, signInWithGoogle } from '@/services/api'
 import { Eyebrow, Panel, Spinner } from '@/components/ui'
 
 export function AuthCallbackView() {
@@ -68,7 +69,7 @@ export function AuthCallbackView() {
         signIn(result)
         router.replace('/home')
       } catch (err) {
-        setError(err instanceof ApiError ? err.detail : 'Sign-in failed. Please try again.')
+        setError(formatApiError(err, 'Sign-in failed. Please try again.'))
       }
     }
     void run()

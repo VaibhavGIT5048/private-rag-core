@@ -11,8 +11,9 @@ import { usePathname, useRouter } from 'next/navigation'
 
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/useToast'
+import { formatApiError } from '@/lib/apiError'
 import { PRIVACY_POLICY_SECTIONS } from '@/lib/privacyPolicy'
-import { ApiError, acceptPrivacyPolicy } from '@/services/api'
+import { acceptPrivacyPolicy } from '@/services/api'
 import { Button } from '@/components/ui'
 
 // A few px of slack: some browsers never report scrollTop+clientHeight as
@@ -53,7 +54,7 @@ export function PrivacyConsentModal() {
       await acceptPrivacyPolicy()
       markPrivacyPolicyAccepted()
     } catch (err) {
-      const detail = err instanceof ApiError ? err.detail : 'Could not reach the backend.'
+      const detail = formatApiError(err, 'Could not reach the backend.')
       flash(`Could not record your acceptance — ${detail}`)
     } finally {
       setSubmitting(false)
