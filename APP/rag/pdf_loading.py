@@ -89,18 +89,6 @@ def load_pdf(pdf_path: str | Path) -> List[PageContent]:
     return documents
 
 
-def load_pdfs(pdf_paths: list[str | Path]) -> List[PageContent]:
-    all_docs: List[PageContent] = []
-    for pdf_path in pdf_paths:
-        docs = load_pdf(pdf_path)
-        all_docs.extend(docs)
-
-    logger.info(
-        f"Processed {len(pdf_paths)} PDFs -> {len(all_docs)} total extracted pages."
-    )
-    return all_docs
-
-
 def preview_pages(documents: List[PageContent], n: int = 2, preview_chars: int = 400) -> None:
     if not documents:
         logger.warning("No documents to preview.")

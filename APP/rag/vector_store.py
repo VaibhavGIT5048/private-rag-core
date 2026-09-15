@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import json
 import pickle
 import re
 import time
@@ -200,30 +199,6 @@ TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)?")
 
 def tokenize_for_bm25(text: str) -> list[str]:
     return TOKEN_PATTERN.findall(text.lower())
-
-
-def load_passed_chunks(path="data/chunks/chunks_processed.jsonl"):
-    potential_paths = [Path(path), Path("../") / path]
-    target_path = None
-    for p in potential_paths:
-        if p.exists():
-            target_path = p
-            break
-
-    if not target_path:
-        print(f"❌ Error: Could not find {path}")
-        return []
-
-    processed_chunks = []
-    print(f"🔄 Loading data from: {target_path}")
-    with open(target_path, "r", encoding="utf-8") as f:
-        for line in f:
-            data = json.loads(line)
-            processed_chunks.append(Document(
-                page_content=data["page_content"],
-                metadata=data["metadata"]
-            ))
-    return processed_chunks
 
 
 def _collection_exists(client, collection_name: str) -> bool:
@@ -508,22 +483,3 @@ def expand_with_neighbors_scored(
                 seen.add(neighbor_id)
 
     return expanded
-
-
-if __name__ == "__main__":
-    print("\n" + "=" * 50)
-    print("🚀 STARTING: VECTOR STORE & HYBRID SEARCH")
-    print("=" * 50)
-
-    all_passed = [c for c in load_passed_chunks() if c.page_content.strip()]
-    print(f"📥 Found {len(all_passed)} chunks to index.")
-
-    if all_passed:
-        vs, bm = build_hybrid_indices(all_passed, document_id=str(uuid.uuid4()), owner_id="debug-cli")
-        test_query = input("\nEnter a test query: ")
-        results = hybrid_retrieve(test_query, vs, bm, all_passed)
-        for i, (doc, score) in enumerate(results, 1):
-            print(f"\n[{i}] RRF Score: {score:.4f} | Page: {doc.metadata.get('page')}")
-            print(f"Content: {doc.page_content[:150]}...")
-    else:
-        print("❌ Build stopped: No data loaded.")
